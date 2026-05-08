@@ -938,6 +938,256 @@ def build_tab6(wb):
     return ws
 
 
+# ── TAB 7: MEDICARE DATA SOURCING ─────────────────────────────
+
+def build_tab_data_sourcing(wb):
+    ws = wb.create_sheet("7. Medicare Data Sourcing")
+    ws.sheet_view.showGridLines = False
+
+    ws.column_dimensions["A"].width = 3
+    ws.column_dimensions["B"].width = 34
+    ws.column_dimensions["C"].width = 28
+    ws.column_dimensions["D"].width = 20
+    ws.column_dimensions["E"].width = 20
+    ws.column_dimensions["F"].width = 20
+    ws.column_dimensions["G"].width = 20
+
+    # ── TITLE ─────────────────────────────────────────────────
+    ws.merge_cells("B1:G1")
+    cell(ws, "B1", "Medicare Supply Demand — Medicare Data Sourcing",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=18, h_align="center")
+    ws.row_dimensions[1].height = 45
+
+    ws.merge_cells("B2:G2")
+    cell(ws, "B2",
+         "Data sources, table descriptions, column terminology, and integration assumptions  |  "
+         "Florida Medicare Advantage  |  Plan Year 2026",
+         color="AAAAAA", bg=DARK_BLUE, size=10, h_align="center", italic=True)
+    ws.row_dimensions[2].height = 20
+
+    row = 4
+
+    # ── SUPPLY-SIDE TABLES ────────────────────────────────────
+    row = section_header(ws, row, 2, 7, "  SUPPLY-SIDE TABLES — Provider Network")
+    row = blank(ws, row)
+
+    for label, value in [
+        ("stg_providers_multi_specialty_v2",
+         "Grain: provider_id × cms_specialty × plan_type × county_fips\n"
+         "Columns: provider_id, zip_cd, zip_lat, zip_long, zip_radius_miles, cms_specialty, plan_type, county_fips\n"
+         "Source: RPDB_RPNPRAC (multi-specialty network), EPDB_PRVDR (provider base), "
+         "RPDB_RINPR (network participation), PRVDR_TY_X_SPCLTY (specialty crosswalk)\n"
+         "Note: One provider can appear for multiple cms_specialty values. "
+         "provider_id = CAST(prvdr_id_no AS STRING)."),
+        ("mdcr_base_claim",
+         "Grain: claim-level. Filtered to HMO IVL, PPO IVL; EXTRACT(YEAR FROM srv_start_dt) IN (2024, 2025); allowed_amt > 0\n"
+         "Columns used: srv_prvdr_id, prod_type, srv_start_dt, allowed_amt\n"
+         "Purpose: Aetna claims-based participation signal — a provider is participating if they have "
+         "at least 1 claim with allowed_amt > 0 in the window.\n"
+         "Note: prod_type values 'HMO IVL' and 'PPO IVL' are mapped to 'MA-HMO' and 'MA-PPO' "
+         "at join time via CASE statement to align with pipeline plan_type conventions."),
+        ("mdcr_tin_par_flag",
+         "Grain: TIN-level participation flag\n"
+         "NOT USED — flag is 1 if >50% of PINs in TIN had claims. This masks individual inactive "
+         "providers within an active TIN. Provider-level activity derived directly from mdcr_base_claim "
+         "using allowed_amt > 0 filter instead."),
+    ]:
+        row = kv(ws, row, f"  {label}", value, h=60)
+    row = blank(ws, row)
+
+    # ── DEMAND-SIDE TABLES ────────────────────────────────────
+    row = section_header(ws, row, 2, 7, "  DEMAND-SIDE TABLES — Member Population & Beneficiaries")
+    row = blank(ws, row)
+
+    for label, value in [
+        ("stg_beneficiaries",
+         "Grain: zip_code\n"
+         "Columns: zip_code, county_fips, county_name, county_type, compliance_threshold, "
+         "total_population, zip_radius_miles, county_eligibles, county_ma_enrolled, zip_medicare_eligibles\n"
+         "Source: ACS 2018 5-year zip estimates (bigquery-public-data.census_bureau_acs.zip_codes_2018_5yr), "
+         "CMS MA penetration file (anbc-hcb-prod), bigquery-public-data.geo_us_boundaries.zip_codes\n"
+         "Note: zip_lat and zip_long are NOT stored here — joined from ref_zip_reference at query time.\n"
+         "zip_medicare_eligibles = total_population × county_eligibles / SUM(total_population) OVER (PARTITION BY county_fips). "
+         "Used as the denominator for pct_covered in Test 1 (replaces ACS all-ages total_population)."),
+        ("ref_hsd_required_counts",
+         "Grain: county_name × cms_specialty\n"
+         "Columns: county_name, county_type, cms_specialty, total_beneficiaries, "
+         "ratio_95th_percentile, beneficiaries_required_to_cover, required_count\n"
+         "Source: CMS 2026 HSD Reference File (loaded via 14_reference_file.sql)\n"
+         "required_count = CMS pre-calculated minimum. Read directly — do NOT recalculate.\n"
+         "beneficiaries_required_to_cover = ratio_95th_percentile × total_beneficiaries\n"
+         "Acute Inpatient required_count = CEIL(12.2 × beneficiaries_required_to_cover / 1000) beds."),
+    ]:
+        row = kv(ws, row, f"  {label}", value, h=70)
+    row = blank(ws, row)
+
+    # ── NPI & CMS FFS TABLES ──────────────────────────────────
+    row = section_header(ws, row, 2, 7, "  NPI & CMS ORIGINAL MEDICARE TABLES — Week 3 Sourcing")
+    row = blank(ws, row)
+
+    for label, value in [
+        ("xwalk_pin_npi_all",
+         "Grain: provider_id (Aetna PIN)\n"
+         "Columns used: provider_id, npi, np_perc, bad_match_ind\n"
+         "Purpose: Crosswalk from Aetna internal provider PIN to CMS NPI for join to CMS FFS data.\n"
+         "Filter applied: np_perc >= 0.5 AND bad_match_ind = 0\n"
+         "np_perc >= 0.5 means the NPI is the best confident match for this PIN (at least 50% confidence). "
+         "bad_match_ind = 0 excludes known bad crosswalk matches.\n"
+         "Providers without a confident NPI match will show participation_status = "
+         "'CONTRACTED NOT ACTIVE - NO CMS RECORD' — not necessarily inactive."),
+        ("cms_medicare_physician_ffs_2023",
+         "Grain: rndrng_npi (CMS NPI)\n"
+         "Columns used: rndrng_npi, rndrng_prvdr_mdcr_prtcptg_ind, rndrng_prvdr_state_abrvtn, "
+         "tot_benes, tot_srvcs, tot_mdcr_pymt_amt\n"
+         "Filter applied: rndrng_prvdr_state_abrvtn = 'FL'\n"
+         "rndrng_prvdr_mdcr_prtcptg_ind = 'Y' means provider participates in Original Medicare / "
+         "accepts assignment. This is calendar year 2023 data — one year lag vs Aetna claims 2024-2025.\n"
+         "tot_benes, tot_srvcs, tot_mdcr_pymt_amt use SAFE_CAST — CMS suppresses values for providers "
+         "with fewer than 11 beneficiaries; CAST would hard-fail on suppressed cells."),
+    ]:
+        row = kv(ws, row, f"  {label}", value, h=70)
+    row = blank(ws, row)
+
+    # ── REFERENCE TABLES ──────────────────────────────────────
+    row = section_header(ws, row, 2, 7, "  REFERENCE TABLES")
+    row = blank(ws, row)
+
+    for label, value in [
+        ("ref_specialty_crosswalk_expanded",
+         "Grain: cms_specialty × aetna_code\n"
+         "Columns: cms_specialty, aetna_code, aetna_description\n"
+         "Maps 442 Aetna specialty_cd values to 43 CMS specialties. One Aetna code can map to one CMS specialty. "
+         "Source: cms_to_aetna_final (2).csv loaded to BigQuery.\n"
+         "Excluded: pediatric codes, telehealth (91175), palliative (2PLMD, 91001), "
+         "PH (Physician — generic catch-all, 135K providers, unmappable to specific CMS specialty), "
+         "hospice surgery (30811)."),
+        ("ref_time_distance",
+         "Grain: cms_specialty × county_type\n"
+         "Columns: cms_specialty, county_type, max_time_min, max_distance_miles, min_ratio_per_1000\n"
+         "CMS maximum time and distance thresholds per 42 CFR 422.116 Table 1.\n"
+         "max_distance_miles is the binding constraint used in has_access distance check.\n"
+         "min_ratio_per_1000 is NULL for facility types (minimum = 1 flat). 12.2 for Acute Inpatient."),
+        ("ref_county_classification",
+         "Grain: county_fips\n"
+         "Columns: county_fips, county_name, county_type, compliance_threshold\n"
+         "67 Florida counties. county_type = Large Metro | Metro | Micro | Rural | CEAC.\n"
+         "compliance_threshold = 0.90 for Large Metro and Metro; 0.85 for Micro, Rural, CEAC.\n"
+         "WARNING: county_type derived from Census ACS data. "
+         "CMS official designations are in the HSD file county_type column. "
+         "Validate against HSD file before production use."),
+        ("ref_zip_reference",
+         "Grain: zip_code\n"
+         "Columns: zip_code, zip_lat, zip_long, zip_radius_miles, area_sq_miles, county_fips\n"
+         "Zip code centroids from bigquery-public-data.geo_us_boundaries.zip_codes.\n"
+         "zip_radius_miles = SQRT(area_sq_miles / PI()) — used for distance confidence band.\n"
+         "Joined into fact_zip_access_v2 and fact_gap_analysis_v2 at query time for both "
+         "member zip (bene_zip) and provider zip (zip_cd) lat/long."),
+    ]:
+        row = kv(ws, row, f"  {label}", value, h=55)
+    row = blank(ws, row)
+
+    # ── FACT TABLES ───────────────────────────────────────────
+    row = section_header(ws, row, 2, 7, "  FACT TABLES — Output & Compliance")
+    row = blank(ws, row)
+
+    for label, value in [
+        ("fact_zip_access_v2",
+         "Grain: bene_zip × cms_specialty × plan_type\n"
+         "Columns: bene_zip, bene_county_fips, bene_county_name, bene_county_type, "
+         "cms_specialty, plan_type, has_access, provider_count_within_threshold\n"
+         "has_access = TRUE if at least 1 contracted provider is within max_distance_miles of that member zip.\n"
+         "Distance = ST_DISTANCE(bene_zip centroid, provider zip centroid) / 1609.34 (meters → miles).\n"
+         "bene_zip_population = zip_medicare_eligibles (Medicare-eligible population, not ACS all-ages)."),
+        ("fact_gap_analysis_v2",
+         "Grain: county_name × cms_specialty × plan_type\n"
+         "Key columns: county_name, county_type, cms_specialty, plan_type, "
+         "total_county_population, population_with_access, pct_covered, "
+         "required_provider_count, actual_count, total_contracted_beds, provider_gap, "
+         "access_compliant, count_compliant, compliance_status\n"
+         "pct_covered = population_with_access / total_county_population (uses zip_medicare_eligibles as denominator).\n"
+         "actual_count = COUNT(DISTINCT provider_id) re-derived from source tables in distinct_providers CTE "
+         "to avoid double-counting from fact_zip_access provider_count_within_threshold.\n"
+         "compliance_status = 'COMPLIANT' if access_compliant = TRUE AND count_compliant = TRUE."),
+        ("provider_par_flag",
+         "Grain: provider_id × plan_type × cms_specialty × county_name\n"
+         "Key columns: provider_id, plan_type, cms_specialty, county_name, county_fips, zip_cd, "
+         "aetna_par_flag, claim_count, total_allowed_amt, first_claim_dt, last_claim_dt, "
+         "original_medicare_flag, tot_benes, tot_srvcs, tot_mdcr_pymt_amt, participation_status\n"
+         "aetna_par_flag = 1 if provider had at least 1 claim with allowed_amt > 0 in 2024-2025.\n"
+         "participation_status categories: 'ACTIVE BOTH', 'AETNA ACTIVE - NO NPI MATCH', "
+         "'AETNA ACTIVE - NOT IN ORIGINAL MEDICARE', 'CONTRACTED NOT ACTIVE - IN ORIGINAL MEDICARE', "
+         "'CONTRACTED NOT ACTIVE - NOT IN ORIGINAL MEDICARE', 'CONTRACTED NOT ACTIVE - NO CMS RECORD'.\n"
+         "Multi-location providers appear once per county. Do NOT sum across counties."),
+        ("week3_data_inventory",
+         "Grain: cms_specialty × plan_type × county_name\n"
+         "Columns: cms_specialty, plan_type, county_name, "
+         "ma_contracted_providers, aetna_participating_providers, cms_medicare_providers\n"
+         "ma_contracted_providers = COUNT(DISTINCT provider_id) in Aetna MA network.\n"
+         "aetna_participating_providers = COUNT(DISTINCT provider_id) WHERE aetna_par_flag = 1 "
+         "(had Aetna claims in 2024-2025 with allowed_amt > 0).\n"
+         "cms_medicare_providers = COUNT(DISTINCT provider_id) WHERE original_medicare_flag = 'Y' "
+         "(accepts assignment in Original Medicare per CMS FFS 2023 data).\n"
+         "Counts are correct at county level only. Do NOT aggregate across counties."),
+    ]:
+        row = kv(ws, row, f"  {label}", value, h=75)
+    row = blank(ws, row)
+
+    # ── KEY ASSUMPTIONS ───────────────────────────────────────
+    row = section_header(ws, row, 2, 7, "  KEY ASSUMPTIONS & DATA DECISIONS")
+    row = blank(ws, row)
+
+    for label, value in [
+        ("pct_covered Denominator",
+         "Uses zip_medicare_eligibles — county Medicare eligibles distributed to zips proportionally "
+         "by each zip's share of county total_population. "
+         "Formula: total_population × county_eligibles / SUM(total_population) OVER (PARTITION BY county_fips).\n"
+         "Prior version used ACS all-ages total_population. CMS 422.116 evaluates access for Medicare "
+         "enrollees, not general population. Medicare-eligible denominator more accurately reflects the "
+         "population subject to the standard."),
+        ("aetna_par_flag Definition",
+         "A provider is 'participating' (aetna_par_flag = 1) if they have at least 1 claim with "
+         "allowed_amt > 0 in 2024 or 2025 for HMO IVL or PPO IVL.\n"
+         "Limitation: Claims-based flag only captures providers who saw Aetna MA patients. "
+         "New providers, low-volume providers, or providers seeing mostly non-Medicare patients "
+         "may appear as NOT ACTIVE even if actively contracted."),
+        ("plan_type Mapping",
+         "mdcr_base_claim uses prod_type = 'HMO IVL' or 'PPO IVL'. "
+         "Pipeline uses plan_type = 'MA-HMO' or 'MA-PPO'.\n"
+         "Mapping applied at JOIN: CASE prod_type WHEN 'HMO IVL' THEN 'MA-HMO' WHEN 'PPO IVL' THEN 'MA-PPO' END."),
+        ("NPI Crosswalk Thresholds",
+         "xwalk_pin_npi_all filtered to np_perc >= 0.5 AND bad_match_ind = 0.\n"
+         "Providers without a confident NPI match are excluded from CMS FFS join and appear as "
+         "'CONTRACTED NOT ACTIVE - NO CMS RECORD' in participation_status — this does not mean they are inactive."),
+        ("CMS FFS Data Vintage",
+         "cms_medicare_physician_ffs_2023 is calendar year 2023 data — one year lag vs Aetna claims 2024-2025.\n"
+         "Some mismatches between aetna_par_flag and original_medicare_flag are expected due to this lag."),
+        ("SAFE_CAST for CMS Numeric Fields",
+         "tot_benes, tot_srvcs, tot_mdcr_pymt_amt use SAFE_CAST (not CAST). "
+         "CMS suppresses values for providers with fewer than 11 beneficiaries. "
+         "CAST would hard-fail on suppressed non-numeric cells; SAFE_CAST returns NULL instead."),
+        ("Distance Method",
+         "Straight-line distance via ST_DISTANCE(ST_GEOGPOINT(long, lat), ST_GEOGPOINT(long, lat)) / 1609.34.\n"
+         "CMS uses drive time. Straight-line underestimates travel time in rural and CEAC counties. "
+         "Provider and member locations use zip code centroid — not actual street address."),
+        ("Telehealth Credit",
+         "NOT applied. 42 CFR 422.116(d)(5) allows a 10% access credit for 14 specialties. "
+         "No telehealth flag is available in the current provider data source."),
+        ("Multi-Location Provider Counting",
+         "Providers contracted in multiple counties appear once per county in provider_par_flag and "
+         "week3_data_inventory. COUNT(DISTINCT provider_id) at county level is correct.\n"
+         "Do NOT sum contracted or active counts across counties — multi-location providers will be double-counted."),
+        ("Excluded Specialty Codes",
+         "Pediatric codes stripped (MA is 65+/disabled, not pediatric).\n"
+         "Telehealth: 91175, Behavioral Health Services Tel.\n"
+         "Palliative: 2PLMD, 91001.\n"
+         "PH (Physician) excluded — generic catch-all with 135K providers, not mappable to a specific CMS specialty.\n"
+         "Hospice surgery: 30811."),
+    ]:
+        row = kv(ws, row, f"  {label}", value, label_bg=LIGHT_YELLOW, h=50)
+
+    return ws
+
+
 # ── MAIN ─────────────────────────────────────────────────────
 import pandas as pd
 from google.cloud import bigquery
@@ -992,7 +1242,7 @@ ORDER BY county_name, cms_specialty, plan_type, participation_status
 # ── TAB 7: WEEK 3 DELIVERABLE 1 — DATA INVENTORY ─────────────
 
 def build_tab7(wb, df_inventory):
-    ws = wb.create_sheet("7. W3 Data Inventory")
+    ws = wb.create_sheet("8. W3 Data Inventory")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -1086,7 +1336,7 @@ STATUS_COLORS = {
 }
 
 def build_tab8(wb, df_par):
-    ws = wb.create_sheet("8. W3 Par Flags")
+    ws = wb.create_sheet("9. W3 Par Flags")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -1218,6 +1468,24 @@ if __name__ == "__main__":
     print("Building Tab 6...")
     build_tab6(wb)
 
+    print("Building Tab 7...")
+    build_tab_data_sourcing(wb)
+
+    print("Querying Week 3 data inventory...")
+    df_inventory = client.query(INVENTORY_QUERY).to_dataframe()
+    print(f"  {len(df_inventory):,} rows")
+
+    print("Querying Week 3 participation flags...")
+    df_par = client.query(PAR_FLAG_QUERY).to_dataframe()
+    print(f"  {len(df_par):,} rows")
+
+    print("Building Tab 8...")
+    build_tab7(wb, df_inventory)
+
+    print("Building Tab 9...")
+    build_tab8(wb, df_par)
+
     output = "medicare_supply_demand.xlsx"
     wb.save(output)
+    print(f"Saved: {output}")
     print(f"Saved: {output}")
