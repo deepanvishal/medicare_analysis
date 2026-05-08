@@ -10,7 +10,7 @@
 -- SOURCE:  A870800_medicare_supply_demand_mbr_with_zip
 --          mdcr_base_provider_mdcr_ntwk
 -- JOIN:    prvdr_id_no = pin
---          ntwk_id_no IN SPLIT(network_id, '-')
+--          UNNEST(network).ntwk_id_no IN SPLIT(network_id, '-')
 -- NOTE:    additional_zip is the location zip from mdcr table.
 --          All original mbr_with_zip columns preserved as-is.
 --          Update stg_providers_multi_specialty_v2 to use
