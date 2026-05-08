@@ -168,57 +168,35 @@ ORDER BY
 --         mdcr_base_claim (submarket)
 --
 -- COLUMNS:
---   contracted_providers       = all providers in Aetna network
---   active_aetna_providers     = had claims 2024-2025 (aetna_par_flag = 1)
---   inactive_aetna_providers   = no claims 2024-2025 (aetna_par_flag = 0)
---   original_medicare_providers= participating in Original Medicare
+--   ma_contracted_providers    = all providers in Aetna MA network
+--   aetna_participating_providers = had claims 2024-2025 (aetna_par_flag = 1)
+--   cms_medicare_providers     = participating in Original Medicare (flag = Y)
 --
 -- NOTE: counts are correct at county level only.
 --       Do NOT sum across counties — multi-location providers
 --       will be double-counted at state/plan level.
 --
--- ASSUMPTION:
---   submarket = most frequent submarket per provider × plan_type
---   from mdcr_base_claim 2024-2025 HMO IVL / PPO IVL
---   APPROX_TOP_COUNT used to avoid fan-out when a provider
---   serves patients across multiple submarkets
+-- GRAIN: cms_specialty × plan_type × county_name
 -- ============================================================
+
+CREATE OR REPLACE TABLE `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_week3_data_inventory`
+OPTIONS (labels=[("owner", "deepan_thulasi_aetna_com")])
+AS
 
 SELECT
   p.cms_specialty,
   p.plan_type,
   p.county_name,
-  s.submarket,
-  COUNT(DISTINCT p.provider_id)                                      AS contracted_providers,
+  COUNT(DISTINCT p.provider_id)                                      AS ma_contracted_providers,
   COUNT(DISTINCT CASE WHEN p.aetna_par_flag = 1
-    THEN p.provider_id END)                                          AS active_aetna_providers,
-  COUNT(DISTINCT CASE WHEN p.aetna_par_flag = 0
-    THEN p.provider_id END)                                          AS inactive_aetna_providers,
+    THEN p.provider_id END)                                          AS aetna_participating_providers,
   COUNT(DISTINCT CASE WHEN p.original_medicare_flag = 'Y'
-    THEN p.provider_id END)                                          AS original_medicare_providers
+    THEN p.provider_id END)                                          AS cms_medicare_providers
 FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_provider_par_flag` p
-LEFT JOIN (
-  SELECT
-    CAST(srv_prvdr_id AS STRING)                                     AS provider_id,
-    prod_type,
-    APPROX_TOP_COUNT(srv_loc_submarket, 1)[OFFSET(0)].value          AS submarket
-  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.mdcr_base_claim`
-  WHERE prod_type IN ('HMO IVL', 'PPO IVL')
-    AND EXTRACT(YEAR FROM srv_start_dt) IN (2024, 2025)
-  GROUP BY
-    srv_prvdr_id,
-    prod_type
-) s
-  ON p.provider_id = s.provider_id
-  AND p.plan_type  = CASE s.prod_type
-    WHEN 'HMO IVL' THEN 'MA-HMO'
-    WHEN 'PPO IVL' THEN 'MA-PPO'
-  END
 GROUP BY
   p.cms_specialty,
   p.plan_type,
-  p.county_name,
-  s.submarket
+  p.county_name
 ORDER BY
   p.county_name,
   p.cms_specialty,
