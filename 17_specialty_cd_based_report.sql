@@ -1170,7 +1170,7 @@ ORDER BY z.zip_code;
 -- WHY:    A multi-specialty provider (e.g. hospital) counts
 --         toward multiple CMS specialty requirements. Using
 --         only primary specialty undercounts supply.
--- SOURCE: A870800_medicare_supply_demand_mbr_with_zip
+-- SOURCE: A870800_medicare_supply_demand_mbr_with_all_zips
 --         edp-prod-hcbstorage.edp_hcb_core_cnsv.RPDB_RPNPRAC
 --         edp-prod-hcbstorage.edp_hcb_core_srcv.EPDB_PRVDR
 --         edp-prod-hcbstorage.edp_hcb_core_srcv.RPDB_RINPR
@@ -1197,7 +1197,7 @@ WITH mbr_exploded AS (
     tin_owner_nm                                                     AS provider_name,
     tax_id_no,
     county_nm,
-    zip_cd,
+    additional_zip                                                   AS zip_cd,
     market,
     submarket,
     CASE
@@ -1205,7 +1205,7 @@ WITH mbr_exploded AS (
       WHEN prod_type = 'PPO IVL' THEN 'MA-PPO'
       ELSE prod_type
     END                                                              AS plan_type
-  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_mbr_with_zip`
+  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_mbr_with_all_zips`
   CROSS JOIN UNNEST(SPLIT(network_id, '-'))                         AS ntwk_id_exploded
   WHERE state = 'FL'
     AND network_id IS NOT NULL
