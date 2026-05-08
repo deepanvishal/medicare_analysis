@@ -24,9 +24,15 @@ SELECT
   m.*,
   n.zip_code                                                   AS additional_zip
 FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_mbr_with_zip` m
-JOIN `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.mdcr_base_provider_mdcr_ntwk` n
+JOIN (
+  SELECT
+    n.*,
+    ntwk.ntwk_id_no                                            AS ntwk_id
+  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.mdcr_base_provider_mdcr_ntwk` n
+  CROSS JOIN UNNEST(n.network) AS ntwk
+) n
   ON CAST(m.prvdr_id_no AS STRING)  = CAST(n.pin AS STRING)
-  AND CAST(n.ntwk_id_no AS STRING) IN UNNEST(SPLIT(m.network_id, '-'))
+  AND CAST(n.ntwk_id AS STRING)    IN UNNEST(SPLIT(m.network_id, '-'))
 WHERE m.state = 'FL'
   AND n.zip_code IS NOT NULL;
 
@@ -42,6 +48,7 @@ SELECT
   COUNT(DISTINCT zip_code)                                     AS zip_count,
   STRING_AGG(DISTINCT zip_code, ', ' ORDER BY zip_code)       AS all_zips
 FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.mdcr_base_provider_mdcr_ntwk`
+CROSS JOIN UNNEST(network) AS ntwk
 WHERE zip_code IS NOT NULL
 GROUP BY pin
 HAVING COUNT(DISTINCT zip_code) > 1
