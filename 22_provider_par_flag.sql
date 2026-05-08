@@ -64,15 +64,18 @@ aetna_network AS (
   -- --------------------------------------------------------
   -- AETNA CONTRACTED NETWORK
   -- all providers in stg_providers (contracted)
+  -- restricted to 67 FL counties in ref_county_classification
   -- distinct on provider × plan × specialty × county
   -- --------------------------------------------------------
   SELECT DISTINCT
-    CAST(provider_id AS STRING)                                      AS provider_id,
-    plan_type,
-    cms_specialty,
-    county_fips,
-    zip_cd
-  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_stg_providers_multi_specialty_v2`
+    CAST(p.provider_id AS STRING)                                    AS provider_id,
+    p.plan_type,
+    p.cms_specialty,
+    p.county_fips,
+    p.zip_cd
+  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_stg_providers_multi_specialty_v2` p
+  JOIN `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_ref_county_classification` rc
+    ON p.county_fips = rc.county_fips
 ),
 
 cms_ffs AS (
