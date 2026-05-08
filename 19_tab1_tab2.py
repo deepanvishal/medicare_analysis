@@ -52,6 +52,18 @@ def blank(ws, row, h=6):
     ws.row_dimensions[row].height = h
     return row + 1
 
+def _int(v, default=0):
+    try:
+        return default if v is None else int(float(v))
+    except (TypeError, ValueError):
+        return default
+
+def _float(v, default=0.0):
+    try:
+        return default if v is None else float(v)
+    except (TypeError, ValueError):
+        return default
+
 
 def build_tab1(wb):
     ws = wb.create_sheet("1. Project Overview")
@@ -1308,9 +1320,9 @@ def build_tab7(wb, df_inventory):
             ("A", row.get('cms_specialty', ''),                    DARK_GREY, row_bg),
             ("B", row.get('plan_type', ''),                        DARK_GREY, row_bg),
             ("C", row.get('county_name', ''),                      DARK_GREY, row_bg),
-            ("D", int(row.get('ma_contracted_providers', 0) or 0),  MID_BLUE,  LIGHT_BLUE),
-            ("E", int(row.get('aetna_participating_providers', 0) or 0), "375623", "E2EFDA"),
-            ("F", int(row.get('cms_medicare_providers', 0) or 0),   "C55A11",  "FCE4D6"),
+            ("D", _int(row.get('ma_contracted_providers')),   MID_BLUE,  LIGHT_BLUE),
+            ("E", _int(row.get('aetna_participating_providers')), "375623", "E2EFDA"),
+            ("F", _int(row.get('cms_medicare_providers')),    "C55A11",  "FCE4D6"),
         ]
         for col, val, txt_color, bg_color in data:
             c = ws[f"{col}{r}"]
@@ -1411,11 +1423,11 @@ def build_tab8(wb, df_par):
             ("B", row.get('cms_specialty', ''),      DARK_GREY, row_bg),
             ("C", row.get('plan_type', ''),          DARK_GREY, row_bg),
             ("D", status,                            txt_c,     status_bg),
-            ("E", int(row.get('provider_count', 0) or 0),       MID_BLUE, LIGHT_BLUE),
-            ("F", int(row.get('total_claims', 0) or 0),         MID_BLUE, LIGHT_BLUE),
-            ("G", float(row.get('total_allowed_amt', 0) or 0),  MID_BLUE, LIGHT_BLUE),
-            ("H", int(row.get('total_cms_benes', 0) or 0),      "C55A11", "FCE4D6"),
-            ("I", float(row.get('avg_cms_payment', 0) or 0),    "C55A11", "FCE4D6"),
+            ("E", _int(row.get('provider_count')),              MID_BLUE, LIGHT_BLUE),
+            ("F", _int(row.get('total_claims')),               MID_BLUE, LIGHT_BLUE),
+            ("G", _float(row.get('total_allowed_amt')),        MID_BLUE, LIGHT_BLUE),
+            ("H", _int(row.get('total_cms_benes')),            "C55A11", "FCE4D6"),
+            ("I", _float(row.get('avg_cms_payment')),          "C55A11", "FCE4D6"),
         ]
         for col, val, txt_color, bg_color in data:
             c = ws[f"{col}{r}"]
