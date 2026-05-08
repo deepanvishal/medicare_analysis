@@ -1115,8 +1115,9 @@ FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_dema
 --           pct_covered calculation
 -- NOTE:   lat/long NOT stored here. Joined from ref_zip_reference
 --         at distance calculation time only.
---         county_eligibles from CMS penetration file used as
---         denominator for HSD required count validation only.
+--         zip_medicare_eligibles = county_eligibles distributed to
+--         zips proportionally by zip share of county total_population.
+--         Used as denominator for pct_covered in county_rollup.
 -- ============================================================
 
 CREATE OR REPLACE TABLE `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_stg_beneficiaries`
@@ -1147,6 +1148,11 @@ county_penetration AS (
 SELECT
   z.zip_code,
   z.zip_population                                                   AS total_population,
+  ROUND(
+    z.zip_population
+      * COALESCE(p.county_eligibles, 0)
+      / NULLIF(SUM(z.zip_population) OVER (PARTITION BY z.county_fips), 0)
+  , 0)                                                               AS zip_medicare_eligibles,
   z.zip_radius_miles,
   z.county_fips,
   z.county_name,
@@ -1360,7 +1366,7 @@ WITH zip_provider_pairs AS (
     b.county_name                                                    AS bene_county_name,
     b.county_type                                                    AS bene_county_type,
     b.compliance_threshold,
-    b.total_population                                               AS bene_zip_population,
+    b.zip_medicare_eligibles                                         AS bene_zip_population,
     b.zip_radius_miles                                               AS bene_zip_radius,
     p.provider_id,
     p.cms_specialty,
@@ -1448,6 +1454,7 @@ WITH all_combinations AS (
     b.county_type,
     b.compliance_threshold,
     b.total_population,
+    b.zip_medicare_eligibles,
     sc.cms_specialty,
     pt.plan_type
   FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_stg_beneficiaries` b
@@ -1471,6 +1478,7 @@ zip_access_complete AS (
     a.county_type,
     a.compliance_threshold,
     a.total_population,
+    a.zip_medicare_eligibles,
     a.cms_specialty,
     a.plan_type,
     COALESCE(z.provider_count_within_threshold, 0)                  AS provider_count,
@@ -1484,7 +1492,8 @@ zip_access_complete AS (
 
 county_rollup AS (
   -- roll up zip level to county level
-  -- pct_covered = population with access / total county population
+  -- pct_covered uses zip_medicare_eligibles (county Medicare eligible
+  -- count distributed to zips by ACS population share) per 422.116
   SELECT
     county_fips,
     county_name,
@@ -1492,11 +1501,11 @@ county_rollup AS (
     compliance_threshold,
     cms_specialty,
     plan_type,
-    SUM(total_population)                                            AS total_county_population,
-    SUM(CASE WHEN has_access THEN total_population ELSE 0 END)      AS population_with_access,
+    SUM(zip_medicare_eligibles)                                      AS total_county_population,
+    SUM(CASE WHEN has_access THEN zip_medicare_eligibles ELSE 0 END) AS population_with_access,
     ROUND(
-      SUM(CASE WHEN has_access THEN total_population ELSE 0 END)
-      / NULLIF(SUM(total_population), 0)
+      SUM(CASE WHEN has_access THEN zip_medicare_eligibles ELSE 0 END)
+      / NULLIF(SUM(zip_medicare_eligibles), 0)
     , 4)                                                             AS pct_covered
   FROM zip_access_complete
   GROUP BY
