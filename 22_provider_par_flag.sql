@@ -90,9 +90,9 @@ cms_ffs AS (
     c.rndrng_prvdr_ent_cd                                            AS entity_type,
     c.rndrng_prvdr_type                                              AS cms_provider_type,
     c.rndrng_prvdr_zip5                                              AS cms_zip,
-    CAST(c.tot_benes AS INT64)                                       AS tot_benes,
-    CAST(c.tot_srvcs AS INT64)                                       AS tot_srvcs,
-    CAST(c.tot_mdcr_pymt_amt AS FLOAT64)                             AS tot_mdcr_pymt_amt
+    SAFE_CAST(c.tot_benes AS INT64)                                  AS tot_benes,
+    SAFE_CAST(c.tot_srvcs AS INT64)                                  AS tot_srvcs,
+    SAFE_CAST(c.tot_mdcr_pymt_amt AS FLOAT64)                        AS tot_mdcr_pymt_amt
   FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.xwalk_pin_npi_all` x
   JOIN `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.cms_medicare_physician_ffs_2023` c
     ON CAST(x.npi AS STRING) = CAST(c.rndrng_npi AS STRING)
@@ -128,22 +128,18 @@ SELECT
 
   -- participation classification
   -- combines aetna claims activity + original medicare status
+  -- NULL-safe: IS NULL check before any flag comparison
   CASE
-    WHEN COALESCE(cl.has_claims_flag, 0) = 1
-      AND f.original_medicare_flag = 'Y'
+    WHEN COALESCE(cl.has_claims_flag, 0) = 1 AND f.provider_id IS NULL
+      THEN 'AETNA ACTIVE - NO NPI MATCH'
+    WHEN COALESCE(cl.has_claims_flag, 0) = 1 AND f.original_medicare_flag = 'Y'
       THEN 'ACTIVE BOTH'
     WHEN COALESCE(cl.has_claims_flag, 0) = 1
-      AND f.original_medicare_flag != 'Y'
       THEN 'AETNA ACTIVE - NOT IN ORIGINAL MEDICARE'
-    WHEN COALESCE(cl.has_claims_flag, 0) = 1
-      AND f.provider_id IS NULL
-      THEN 'AETNA ACTIVE - NO NPI MATCH'
-    WHEN COALESCE(cl.has_claims_flag, 0) = 0
-      AND f.original_medicare_flag = 'Y'
-      THEN 'CONTRACTED NOT ACTIVE - IN ORIGINAL MEDICARE'
-    WHEN COALESCE(cl.has_claims_flag, 0) = 0
-      AND f.provider_id IS NULL
+    WHEN f.provider_id IS NULL
       THEN 'CONTRACTED NOT ACTIVE - NO CMS RECORD'
+    WHEN f.original_medicare_flag = 'Y'
+      THEN 'CONTRACTED NOT ACTIVE - IN ORIGINAL MEDICARE'
     ELSE
       'CONTRACTED NOT ACTIVE - NOT IN ORIGINAL MEDICARE'
   END                                                                AS participation_status
