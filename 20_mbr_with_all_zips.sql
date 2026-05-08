@@ -48,7 +48,6 @@ SELECT
   COUNT(DISTINCT zip_code)                                     AS zip_count,
   STRING_AGG(DISTINCT zip_code, ', ' ORDER BY zip_code)       AS all_zips
 FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.mdcr_base_provider_mdcr_ntwk`
-CROSS JOIN UNNEST(network) AS ntwk
 WHERE zip_code IS NOT NULL
 GROUP BY pin
 HAVING COUNT(DISTINCT zip_code) > 1
