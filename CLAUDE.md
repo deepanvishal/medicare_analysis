@@ -343,6 +343,105 @@ Beds-based (1):
 
 ---
 
+## Project Delivery Plan
+
+### Project Objective
+
+Build analytic models to determine whether the provider network has the right capacity, specialties, and geographic distribution, and to identify where to add, remove, or reconfigure providers under multiple demand, regulatory, and scenario assumptions.
+
+This plan explicitly incorporates:
+- CMS MA Network Adequacy Standards (time & distance, specialty lists)
+- County-based requirements (critical for Medicare)
+- Utilization patterns (higher chronic, specialty-heavy demand) — next phase
+- Provider participation nuances (accepting MA ≠ participating in all products) — next phase
+- Facility-based access expectations (hospitals, SNF, dialysis) — next phase
+
+Items marked 'next phase' are scoped for Weeks 5+ and are not part of the current 4-week delivery plan.
+
+---
+
+### Weeks 1-2 — Medicare Scope, Rules & Success Criteria
+
+**Objectives:** Lock Medicare-specific requirements upfront to avoid rework.
+
+| Deliverable | Status | Output |
+|-------------|--------|--------|
+| CMS MA network adequacy rules coded (42 CFR 422.116) | COMPLETE | ref_time_distance |
+| 43 CMS specialties mapped to 442 Aetna specialty codes | COMPLETE | cms_to_aetna_final.csv |
+| Time & distance thresholds by specialty × county type | COMPLETE | ref_time_distance |
+| Minimum provider counts from CMS 2026 HSD file | COMPLETE | ref_hsd_required_counts |
+| Plan types confirmed: MA-HMO, MA-PPO | COMPLETE | stg_providers (plan_type) |
+| 67 Florida counties in scope | COMPLETE | ref_county_classification |
+| Compliance report (county × specialty × plan type) | COMPLETE | fact_gap_analysis_v2 |
+| Business-ready Excel report (5 tabs) | COMPLETE | medicare_supply_demand.xlsx |
+| Business-ready slides | COMPLETE | medicare_supply_demand.pptx |
+| Business-ready Word document | COMPLETE | medicare_supply_demand_report.docx |
+| DSNP, MA Group plan types | PENDING | Not yet scoped |
+
+---
+
+### Week 3 — Medicare Data Sourcing & Integration
+
+**Objectives:** Assemble Medicare-specific datasets.
+
+**Key Data Sources:**
+
+| Source | Status | Description |
+|--------|--------|-------------|
+| mdcr_base_claim | COMPLETE | Aetna MA claims 2024-2025, HMO IVL + PPO IVL |
+| cms_medicare_physician_ffs_2023 | COMPLETE | CMS Original Medicare participation by NPI |
+| xwalk_pin_npi_all | COMPLETE | Aetna PIN to NPI crosswalk (np_perc >= 0.5) |
+| mdcr_tin_par_flag | COMPLETE | TIN-level par flag (not used — too coarse) |
+| CMS county classification | COMPLETE | From HSD file county_type column directly |
+
+**Deliverables:**
+
+| Deliverable | Status | Output |
+|-------------|--------|--------|
+| Deliverable 1: Data inventory by specialty × county × submarket × product | COMPLETE | 22_provider_par_flag.sql (deliverable 1 query) |
+| Deliverable 2: Data quality assessment | PENDING | In scope |
+| Deliverable 3: Provider participation flags with drilldown | COMPLETE | 22_provider_par_flag.sql |
+| Provider-level par flag (claims-based, not TIN) | COMPLETE | provider_par_flag table |
+| NPI crosswalk join (np_perc >= 0.5, bad_match_ind = 0) | COMPLETE | xwalk_pin_npi_all |
+| Original Medicare flag (rndrng_prvdr_mdcr_prtcptg_ind) | COMPLETE | cms_medicare_physician_ffs_2023 |
+| Participation status classification (6 categories) | COMPLETE | participation_status column |
+
+**NOTE:** mdcr_tin_par_flag not used — it is at TIN level. par_flag = 1 if >50% of PINs in TIN had claims, which masks individual inactive providers. Provider-level flag derived directly from mdcr_base_claim (allowed_amt > 0 in 2024-2025).
+
+---
+
+### Week 4 — Medicare Geospatial Normalization
+
+**Objectives:** Ensure geography aligns with CMS standards.
+
+| Deliverable | Status | Output |
+|-------------|--------|--------|
+| Zip code centroids (member + provider) | COMPLETE | ref_zip_reference |
+| County overlays with CMS classification | COMPLETE | ref_county_classification |
+| CMS county type from HSD file (official) | COMPLETE | ref_hsd_required_counts.county_type |
+| Distance matrix (straight-line, zip centroid) | COMPLETE | fact_zip_access_v2 |
+| Liberty County FL classified as CEAC | COMPLETE | Confirmed from HSD file |
+| Drive time vs straight-line evaluation | PENDING | Week 5+ |
+| ZIP+4 / census block precision | PENDING | Currently zip-5 centroid only |
+| Specialty groupings finalized (PCP vs Specialist) | COMPLETE | cms_to_aetna_final.csv |
+| Provider address geocoding (vs zip centroid) | PENDING | Week 5+ |
+
+---
+
+### Week 5+ — Next Phase
+
+| Planned Activity | Notes |
+|-----------------|-------|
+| Utilization patterns | Claims-based utilization rates by specialty for Medicare population |
+| Provider participation nuances | Accepting MA ≠ participating in all products. DSNP and MA Group evaluation |
+| Drive time distance | Replace straight-line with drive time for rural/CEAC counties |
+| Telehealth credit | 14 specialties eligible for 10% access credit per 422.116(d)(5) |
+| Medicare-specific population | Replace Census all-ages zip population with zip-level Medicare beneficiary estimates |
+| Exception requests | Flag counties eligible for CMS exception filing where no providers exist |
+| Data quality assessment | NULL zips, unmapped specialty codes, NPI match rates, county name mismatches |
+
+---
+
 ## County Types (CMS 422.116(c))
 
 ```

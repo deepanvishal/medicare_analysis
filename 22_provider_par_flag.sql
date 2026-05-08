@@ -8,6 +8,8 @@
 --   2. CMS Original Medicare participation (cms_medicare_physician_ffs_2023)
 --   3. NPI crosswalk (xwalk_pin_npi_all)
 --
+-- GRAIN:   provider_id × plan_type × cms_specialty × county_name
+--
 -- ASSUMPTION:
 --   A provider is "participating" if they have at least 1 claim
 --   with allowed_amt > 0 in 2024 or 2025 for HMO IVL or PPO IVL.
@@ -30,6 +32,11 @@
 --   NPI crosswalk uses np_perc >= 0.5 and bad_match_ind = 0.
 --   Providers without a confident NPI match will show as
 --   NO CMS RECORD — not necessarily inactive.
+--
+--   Multi-location providers appear once per county.
+--   COUNT(DISTINCT provider_id) at county level is correct.
+--   Do NOT sum contracted/active counts across counties —
+--   multi-location providers will be double-counted.
 -- ============================================================
 
 CREATE OR REPLACE TABLE `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_provider_par_flag`
@@ -63,7 +70,6 @@ WITH claims_activity AS (
 aetna_network AS (
   -- --------------------------------------------------------
   -- AETNA CONTRACTED NETWORK
-  -- all providers in stg_providers (contracted)
   -- restricted to 67 FL counties in ref_county_classification
   -- distinct on provider × plan × specialty × county
   -- --------------------------------------------------------
@@ -71,6 +77,7 @@ aetna_network AS (
     CAST(p.provider_id AS STRING)                                    AS provider_id,
     p.plan_type,
     p.cms_specialty,
+    rc.county_name,
     p.county_fips,
     p.zip_cd
   FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_stg_providers_multi_specialty_v2` p
@@ -88,11 +95,7 @@ cms_ffs AS (
   -- --------------------------------------------------------
   SELECT
     CAST(x.provider_id AS STRING)                                    AS provider_id,
-    CAST(c.rndrng_npi AS STRING)                                     AS npi,
     c.rndrng_prvdr_mdcr_prtcptg_ind                                  AS original_medicare_flag,
-    c.rndrng_prvdr_ent_cd                                            AS entity_type,
-    c.rndrng_prvdr_type                                              AS cms_provider_type,
-    c.rndrng_prvdr_zip5                                              AS cms_zip,
     SAFE_CAST(c.tot_benes AS INT64)                                  AS tot_benes,
     SAFE_CAST(c.tot_srvcs AS INT64)                                  AS tot_srvcs,
     SAFE_CAST(c.tot_mdcr_pymt_amt AS FLOAT64)                        AS tot_mdcr_pymt_amt
@@ -108,29 +111,24 @@ SELECT
   a.provider_id,
   a.plan_type,
   a.cms_specialty,
+  a.county_name,
   a.county_fips,
   a.zip_cd,
 
   -- aetna claims-based participation
   COALESCE(cl.has_claims_flag, 0)                                    AS aetna_par_flag,
-  cl.prod_type,
   cl.claim_count,
   cl.total_allowed_amt,
   cl.first_claim_dt,
   cl.last_claim_dt,
 
   -- cms original medicare
-  f.npi,
   f.original_medicare_flag,
-  f.entity_type,
-  f.cms_provider_type,
-  f.cms_zip,
   COALESCE(f.tot_benes, 0)                                           AS tot_benes,
   COALESCE(f.tot_srvcs, 0)                                           AS tot_srvcs,
   COALESCE(f.tot_mdcr_pymt_amt, 0)                                   AS tot_mdcr_pymt_amt,
 
   -- participation classification
-  -- combines aetna claims activity + original medicare status
   -- NULL-safe: IS NULL check before any flag comparison
   CASE
     WHEN COALESCE(cl.has_claims_flag, 0) = 1 AND f.provider_id IS NULL
@@ -150,36 +148,78 @@ SELECT
 FROM aetna_network a
 LEFT JOIN claims_activity cl
   ON a.provider_id = cl.provider_id
-  AND a.plan_type  = cl.prod_type
+  AND a.plan_type  = CASE cl.prod_type
+    WHEN 'HMO IVL' THEN 'MA-HMO'
+    WHEN 'PPO IVL' THEN 'MA-PPO'
+  END
 LEFT JOIN cms_ffs f
   ON a.provider_id = f.provider_id
 ORDER BY
-  a.county_fips,
+  a.county_name,
   a.cms_specialty,
-  participation_status;
+  a.plan_type;
 
 
 -- ============================================================
--- DRILLDOWN SUMMARY
--- run after the table above is created
+-- WEEK 3 DELIVERABLE 1: MEDICARE DATA INVENTORY
+-- Distribution by specialty, plan type, county, submarket
+--
+-- SOURCE: A870800_medicare_supply_demand_provider_par_flag
+--         mdcr_base_claim (submarket)
+--
+-- COLUMNS:
+--   contracted_providers       = all providers in Aetna network
+--   active_aetna_providers     = had claims 2024-2025 (aetna_par_flag = 1)
+--   inactive_aetna_providers   = no claims 2024-2025 (aetna_par_flag = 0)
+--   original_medicare_providers= participating in Original Medicare
+--
+-- NOTE: counts are correct at county level only.
+--       Do NOT sum across counties — multi-location providers
+--       will be double-counted at state/plan level.
+--
+-- ASSUMPTION:
+--   submarket = most frequent submarket per provider × plan_type
+--   from mdcr_base_claim 2024-2025 HMO IVL / PPO IVL
+--   APPROX_TOP_COUNT used to avoid fan-out when a provider
+--   serves patients across multiple submarkets
 -- ============================================================
 
 SELECT
-  cms_specialty,
-  plan_type,
-  county_fips,
-  participation_status,
-  COUNT(DISTINCT provider_id)                                        AS provider_count,
-  SUM(tot_benes)                                                     AS total_medicare_benes_served,
-  SUM(total_allowed_amt)                                             AS total_aetna_allowed_amt,
-  ROUND(AVG(tot_mdcr_pymt_amt), 2)                                   AS avg_cms_payment
-FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_provider_par_flag`
+  p.cms_specialty,
+  p.plan_type,
+  p.county_name,
+  s.submarket,
+  COUNT(DISTINCT p.provider_id)                                      AS contracted_providers,
+  COUNT(DISTINCT CASE WHEN p.aetna_par_flag = 1
+    THEN p.provider_id END)                                          AS active_aetna_providers,
+  COUNT(DISTINCT CASE WHEN p.aetna_par_flag = 0
+    THEN p.provider_id END)                                          AS inactive_aetna_providers,
+  COUNT(DISTINCT CASE WHEN p.original_medicare_flag = 'Y'
+    THEN p.provider_id END)                                          AS original_medicare_providers
+FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_provider_par_flag` p
+LEFT JOIN (
+  SELECT
+    CAST(srv_prvdr_id AS STRING)                                     AS provider_id,
+    prod_type,
+    APPROX_TOP_COUNT(srv_loc_submarket, 1)[OFFSET(0)].value          AS submarket
+  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.mdcr_base_claim`
+  WHERE prod_type IN ('HMO IVL', 'PPO IVL')
+    AND EXTRACT(YEAR FROM srv_start_dt) IN (2024, 2025)
+  GROUP BY
+    srv_prvdr_id,
+    prod_type
+) s
+  ON p.provider_id = s.provider_id
+  AND p.plan_type  = CASE s.prod_type
+    WHEN 'HMO IVL' THEN 'MA-HMO'
+    WHEN 'PPO IVL' THEN 'MA-PPO'
+  END
 GROUP BY
-  cms_specialty,
-  plan_type,
-  county_fips,
-  participation_status
+  p.cms_specialty,
+  p.plan_type,
+  p.county_name,
+  s.submarket
 ORDER BY
-  cms_specialty,
-  county_fips,
-  participation_status;
+  p.county_name,
+  p.cms_specialty,
+  p.plan_type;
