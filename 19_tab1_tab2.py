@@ -960,6 +960,228 @@ GROUP BY county_name, county_type, plan_type
 ORDER BY pct_compliant ASC, county_name, plan_type
 """
 
+INVENTORY_QUERY = f"""
+SELECT
+  cms_specialty,
+  plan_type,
+  county_name,
+  ma_contracted_providers,
+  aetna_participating_providers,
+  cms_medicare_providers
+FROM `{PROJECT}.{DATASET}.{PREFIX}_week3_data_inventory`
+ORDER BY county_name, cms_specialty, plan_type
+"""
+
+PAR_FLAG_QUERY = f"""
+SELECT
+  county_name,
+  cms_specialty,
+  plan_type,
+  participation_status,
+  COUNT(DISTINCT provider_id)            AS provider_count,
+  SUM(claim_count)                       AS total_claims,
+  ROUND(SUM(total_allowed_amt), 2)       AS total_allowed_amt,
+  SUM(tot_benes)                         AS total_cms_benes,
+  ROUND(AVG(NULLIF(tot_mdcr_pymt_amt, 0)), 2) AS avg_cms_payment
+FROM `{PROJECT}.{DATASET}.{PREFIX}_provider_par_flag`
+GROUP BY county_name, cms_specialty, plan_type, participation_status
+ORDER BY county_name, cms_specialty, plan_type, participation_status
+"""
+
+
+# ── TAB 7: WEEK 3 DELIVERABLE 1 — DATA INVENTORY ─────────────
+
+def build_tab7(wb, df_inventory):
+    ws = wb.create_sheet("7. W3 Data Inventory")
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "A5"
+
+    col_widths = {
+        "A": 30, "B": 12, "C": 22,
+        "D": 22, "E": 24, "F": 24,
+    }
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    # title
+    ws.merge_cells("A1:F1")
+    cell(ws, "A1", "Medicare Supply Demand — Week 3 Deliverable 1: Provider Data Inventory",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
+    ws.row_dimensions[1].height = 35
+
+    # subtitle
+    ws.merge_cells("A2:F2")
+    cell(ws, "A2",
+         "Grain: CMS Specialty × Plan Type × County  |  "
+         "Counts are correct at county level only — do NOT sum across counties",
+         size=9, color="666666", bg="F9F9F9", italic=True, h_align="left")
+    ws.row_dimensions[2].height = 18
+
+    # callouts
+    callouts = {
+        "A3": "",
+        "B3": "",
+        "C3": "",
+        "D3": "All providers in Aetna MA contracted network",
+        "E3": "Providers with at least 1 claim (allowed_amt > 0) in 2024-2025",
+        "F3": "Providers participating in Original Medicare (rndrng_prvdr_mdcr_prtcptg_ind = Y)",
+    }
+    for ref, txt in callouts.items():
+        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
+    ws.row_dimensions[3].height = 28
+
+    # headers
+    headers = [
+        ("A4", "CMS Specialty",                  DARK_GREY),
+        ("B4", "Plan Type",                       DARK_GREY),
+        ("C4", "County",                          DARK_GREY),
+        ("D4", "MA Contracted\nProviders",         MID_BLUE),
+        ("E4", "Aetna Participating\nProviders",   "375623"),
+        ("F4", "CMS Medicare\nProviders",          "C55A11"),
+    ]
+    ws.row_dimensions[4].height = 35
+    for ref, label, bg in headers:
+        cell(ws, ref, label, bold=True, color=WHITE,
+             bg=bg, size=10, h_align="center", bdr=True)
+
+    prev_specialty = None
+    alt = True
+
+    for i, (_, row) in enumerate(df_inventory.iterrows()):
+        r = i + 5
+        if row['cms_specialty'] != prev_specialty:
+            alt = not alt
+            prev_specialty = row['cms_specialty']
+        row_bg = GREY if alt else WHITE
+
+        data = [
+            ("A", row.get('cms_specialty', ''),                    DARK_GREY, row_bg),
+            ("B", row.get('plan_type', ''),                        DARK_GREY, row_bg),
+            ("C", row.get('county_name', ''),                      DARK_GREY, row_bg),
+            ("D", int(row.get('ma_contracted_providers', 0) or 0),  MID_BLUE,  LIGHT_BLUE),
+            ("E", int(row.get('aetna_participating_providers', 0) or 0), "375623", "E2EFDA"),
+            ("F", int(row.get('cms_medicare_providers', 0) or 0),   "C55A11",  "FCE4D6"),
+        ]
+        for col, val, txt_color, bg_color in data:
+            c = ws[f"{col}{r}"]
+            c.value = val
+            c.font = Font(name="Arial", color=txt_color, size=9)
+            c.fill = fill(bg_color)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = thin_border()
+        ws.row_dimensions[r].height = 15
+
+    return ws
+
+
+# ── TAB 8: WEEK 3 DELIVERABLE 3 — PARTICIPATION FLAGS ─────────
+
+STATUS_COLORS = {
+    'ACTIVE BOTH':                                  ("375623", "E2EFDA"),
+    'AETNA ACTIVE - NOT IN ORIGINAL MEDICARE':      ("7F6000", "FFF2CC"),
+    'AETNA ACTIVE - NO NPI MATCH':                  ("7F6000", "FFFDE7"),
+    'CONTRACTED NOT ACTIVE - IN ORIGINAL MEDICARE': ("C55A11", "FCE4D6"),
+    'CONTRACTED NOT ACTIVE - NO CMS RECORD':        ("C00000", "FFE0E0"),
+    'CONTRACTED NOT ACTIVE - NOT IN ORIGINAL MEDICARE': ("C00000", "FFE0E0"),
+}
+
+def build_tab8(wb, df_par):
+    ws = wb.create_sheet("8. W3 Par Flags")
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "A5"
+
+    col_widths = {
+        "A": 22, "B": 30, "C": 12,
+        "D": 44, "E": 14,
+        "F": 14, "G": 18, "H": 16, "I": 18,
+    }
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    # title
+    ws.merge_cells("A1:I1")
+    cell(ws, "A1", "Medicare Supply Demand — Week 3 Deliverable 3: Provider Participation Flags",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
+    ws.row_dimensions[1].height = 35
+
+    # subtitle
+    ws.merge_cells("A2:I2")
+    cell(ws, "A2",
+         "Grain: County × CMS Specialty × Plan Type × Participation Status  |  "
+         "Participation = Aetna claims activity (2024-2025) + CMS Original Medicare flag",
+         size=9, color="666666", bg="F9F9F9", italic=True, h_align="left")
+    ws.row_dimensions[2].height = 18
+
+    # callouts
+    callouts = {
+        "A3": "", "B3": "", "C3": "", "D3": "",
+        "E3": "COUNT(DISTINCT provider_id) per status",
+        "F3": "SUM of claim_count for active providers",
+        "G3": "SUM of Aetna allowed amounts 2024-2025",
+        "H3": "SUM of CMS Medicare beneficiaries served (2023 FFS)",
+        "I3": "AVG CMS payment per provider (active only)",
+    }
+    for ref, txt in callouts.items():
+        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
+    ws.row_dimensions[3].height = 28
+
+    # headers
+    headers = [
+        ("A4", "County",               DARK_GREY),
+        ("B4", "CMS Specialty",        DARK_GREY),
+        ("C4", "Plan Type",            DARK_GREY),
+        ("D4", "Participation Status", DARK_GREY),
+        ("E4", "Provider\nCount",      MID_BLUE),
+        ("F4", "Total\nClaims",        MID_BLUE),
+        ("G4", "Total Aetna\nAllowed", MID_BLUE),
+        ("H4", "CMS Benes\nServed",    "C55A11"),
+        ("I4", "Avg CMS\nPayment",     "C55A11"),
+    ]
+    ws.row_dimensions[4].height = 35
+    for ref, label, bg in headers:
+        cell(ws, ref, label, bold=True, color=WHITE,
+             bg=bg, size=10, h_align="center", bdr=True)
+
+    prev_key = None
+    alt = True
+
+    for i, (_, row) in enumerate(df_par.iterrows()):
+        r = i + 5
+        key = (row.get('county_name', ''), row.get('cms_specialty', ''))
+        if key != prev_key:
+            alt = not alt
+            prev_key = key
+        row_bg = GREY if alt else WHITE
+
+        status = str(row.get('participation_status', ''))
+        txt_c, status_bg = STATUS_COLORS.get(status, (DARK_GREY, row_bg))
+
+        data = [
+            ("A", row.get('county_name', ''),       DARK_GREY, row_bg),
+            ("B", row.get('cms_specialty', ''),      DARK_GREY, row_bg),
+            ("C", row.get('plan_type', ''),          DARK_GREY, row_bg),
+            ("D", status,                            txt_c,     status_bg),
+            ("E", int(row.get('provider_count', 0) or 0),       MID_BLUE, LIGHT_BLUE),
+            ("F", int(row.get('total_claims', 0) or 0),         MID_BLUE, LIGHT_BLUE),
+            ("G", float(row.get('total_allowed_amt', 0) or 0),  MID_BLUE, LIGHT_BLUE),
+            ("H", int(row.get('total_cms_benes', 0) or 0),      "C55A11", "FCE4D6"),
+            ("I", float(row.get('avg_cms_payment', 0) or 0),    "C55A11", "FCE4D6"),
+        ]
+        for col, val, txt_color, bg_color in data:
+            c = ws[f"{col}{r}"]
+            c.value = val
+            c.font = Font(name="Arial", color=txt_color, size=9,
+                          bold=(col == "D"))
+            c.fill = fill(bg_color)
+            c.alignment = Alignment(horizontal="center" if col not in ("A","B","D") else "left",
+                                    vertical="center")
+            c.border = thin_border()
+            if col in ("G", "I"):
+                c.number_format = "#,##0.00"
+        ws.row_dimensions[r].height = 15
+
+    return ws
+
 if __name__ == "__main__":
     client = bigquery.Client(project=CLIENT_PROJECT)
 
