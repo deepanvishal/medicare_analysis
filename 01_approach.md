@@ -26,10 +26,10 @@ This project builds an analytic model to identify gaps **before** CMS audits the
 
 | Step | What We Did | Why |
 |------|-------------|-----|
-| 1 | Collected the CMS rulebook (42 CFR 422.116) | To know exactly what the compliance thresholds are for every specialty and every county type |
+| 1 | Loaded the CMS 2026 HSD Reference File (published Dec 17, 2025) into BigQuery | Provides the exact minimum provider and facility counts CMS requires per county per specialty — no approximation needed |
 | 2 | Classified every Florida county into one of 5 types | CMS has different rules for dense cities vs rural areas. A cardiologist must be within 10 miles in Miami but 60 miles in a rural county |
 | 3 | Pulled Medicare enrollment data by county | To know how many Medicare members live in each area — this determines how many providers are required |
-| 4 | Mapped Aetna's provider specialties to CMS specialty categories | Aetna and CMS use different specialty names. We matched them up so we're comparing apples to apples |
+| 4 | Mapped Aetna's provider specialties to CMS specialty categories | Aetna and CMS use different specialty codes. We built an expanded crosswalk (442 mappings) at the raw specialty_cd level for precise matching |
 | 5 | Located every contracted provider on a map using their zip code | So we can measure actual distances between members and providers |
 | 6 | Measured distances between members and providers | For every member zip code, we found all contracted providers within the CMS-allowed distance for each specialty |
 | 7 | Rolled up results to county level | CMS evaluates compliance at the county level |
@@ -42,7 +42,7 @@ This project builds an analytic model to identify gaps **before** CMS audits the
 | Test | What It Checks | Threshold |
 |------|----------------|-----------|
 | Access | % of members who have at least 1 provider within the maximum allowed distance | 90% in cities, 85% in rural areas |
-| Count | Actual number of contracted providers vs minimum required per 1,000 members | Varies by specialty and county type |
+| Count | Actual number of contracted providers vs minimum required per county per specialty | Exact counts from CMS 2026 HSD Reference File — varies by county and specialty |
 
 Both tests must pass for a county to be compliant.
 

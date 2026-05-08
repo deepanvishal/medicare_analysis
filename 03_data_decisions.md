@@ -6,13 +6,18 @@
 ## 1. Specialty Mapping Decisions
 
 ### 1.1 Aetna to CMS Specialty Crosswalk
-Aetna uses an internal specialty coding system that does not align 1:1 with CMS 422.116 specialty categories. We manually mapped Aetna codes to CMS specialties using claims data validation.
+Aetna uses an internal specialty coding system that does not align 1:1 with CMS 422.116 specialty categories. Two crosswalk tables are used for different purposes:
+
+| Table | Grain | Rows | Used For |
+|-------|-------|------|----------|
+| `ref_specialty_crosswalk_expanded` | `specialty_cd` (raw code) | 442 | Provider lookup in `stg_providers_multi_specialty_v2` — maps each raw Aetna specialty code to a CMS specialty |
+| `ref_specialty_crosswalk` | `specialty_ctg_cd` (category code) | 43 | Building the complete county × specialty grid in `fact_gap_analysis_v2` — one row per CMS specialty |
 
 | Decision | Rationale |
 |----------|-----------|
-| Used claims procedure codes to validate specialty mappings for missing CMS categories | Data-driven approach — top specialty by claim volume for each procedure group was selected as the proxy |
-| Accepted overlapping Aetna codes for multiple CMS specialties | Some Aetna codes (e.g. VVRH) map to multiple CMS specialties (Physical Therapy, Occupational Therapy, Speech Therapy). This intentionally fans out one provider row to multiple CMS specialty rows |
-| Flagged overlapping mappings with `inflated = TRUE` | Provider counts for these specialties are inflated — a single VVRH provider counts toward PT, OT, and ST simultaneously. Compliance scores for these specialties should be interpreted with caution |
+| Used `specialty_cd` (raw code) for provider mapping, not `specialty_ctg_cd` (category) | Raw code is more granular and accurate. Category codes are aggregated and can group unrelated specialties together |
+| Accepted overlapping Aetna codes for multiple CMS specialties | Some Aetna codes map to multiple CMS specialties (e.g. `2PSOC` counts for both Plastic Surgery and Ophthalmology). This intentionally fans out one provider row to multiple CMS specialty rows |
+| No `inflated` flag in current pipeline | The `ref_specialty_crosswalk_expanded` approach at `specialty_cd` level reduces inflation compared to the prior `specialty_ctg_cd` approach. Overlapping providers are still a known limitation but are not separately flagged |
 
 ### 1.2 Unmatched CMS Specialties
 The following CMS specialties had no exact Aetna code match and were mapped to proxy codes:
@@ -116,9 +121,10 @@ The following CMS specialties had no exact Aetna code match and were mapped to p
 ### 5.2 Minimum Provider Count
 | Decision | Rationale |
 |----------|-----------|
-| Facility types use minimum count of 1 | Per 422.116, facility specialty types (SNF, ASC, radiology etc.) require minimum 1 facility per county |
-| Provider specialty types use ratio-based minimum | Per 422.116 Table 2, provider specialties require minimum ratio per 1,000 beneficiaries |
-| Used `county_eligibles` not zip population as denominator | CMS specifies total Medicare eligibles in county as the denominator for minimum number calculation |
+| Used exact counts from CMS 2026 HSD Reference File | CMS derives required counts using a 95th percentile base population ratio that cannot be precisely reproduced from available data. Using the published HSD file directly eliminates approximation error |
+| `ref_hsd_required_counts` loaded via `14_reference_file.sql` | Hardcoded from the CMS HSD file (published Dec 17, 2025). Must be re-run when CMS publishes a new HSD file each cycle |
+| Acute Inpatient Hospitals use contracted bed count, not provider count | CMS requires 12.2 beds per 1,000 beneficiaries for hospitals. `hosp_list_cmi.Beds` is used as the actual count; required count comes from `ref_hsd_required_counts` |
+| All other specialties use distinct contracted provider count | `COUNT(DISTINCT provider_id)` per county × specialty × plan type, filtered to providers within the CMS distance threshold of at least one beneficiary zip |
 
 ---
 
