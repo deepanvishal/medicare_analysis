@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(& \"C:\\\\Users\\\\Deepan\\\\ApplyPilot\\\\venv\\\\Scripts\\\\python.exe\" -c \"from google.cloud import bigquery; print\\('ok'\\)\" 2>&1)"
+    ]
+  }
+}
