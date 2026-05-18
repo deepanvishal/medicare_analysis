@@ -1580,8 +1580,11 @@ SELECT
         ELSE 'MIXED'
     END                                                 AS submarket_status
 FROM `{PROJECT}.{DATASET}.{PREFIX}_fact_gap_analysis_v2` f
-JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
-    ON f.county_name = m.aetna_county_nm
+JOIN (
+    SELECT DISTINCT aetna_county_nm, submarket
+    FROM `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2`
+    WHERE aetna_county_nm IS NOT NULL AND submarket IS NOT NULL
+) m ON f.county_name = m.aetna_county_nm
 GROUP BY m.submarket, f.county_type, f.cms_specialty, f.plan_type
 ORDER BY submarket_status DESC, m.submarket, f.cms_specialty, f.plan_type
 """
@@ -1601,8 +1604,11 @@ SELECT
     COUNTIF(f.access_compliant = FALSE)                 AS access_failures,
     COUNTIF(f.count_compliant = FALSE)                  AS count_failures
 FROM `{PROJECT}.{DATASET}.{PREFIX}_fact_gap_analysis_v2` f
-JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
-    ON f.county_name = m.aetna_county_nm
+JOIN (
+    SELECT DISTINCT aetna_county_nm, submarket
+    FROM `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2`
+    WHERE aetna_county_nm IS NOT NULL AND submarket IS NOT NULL
+) m ON f.county_name = m.aetna_county_nm
 GROUP BY m.submarket, f.plan_type
 ORDER BY pct_compliant ASC, m.submarket, f.plan_type
 """
@@ -1617,8 +1623,11 @@ SELECT
     SUM(COALESCE(i.aetna_participating_providers, 0))   AS aetna_active,
     COUNT(DISTINCT i.county_name)                       AS county_count
 FROM `{PROJECT}.{DATASET}.{PREFIX}_week3_data_inventory` i
-JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
-    ON i.county_name = m.aetna_county_nm
+JOIN (
+    SELECT DISTINCT aetna_county_nm, submarket
+    FROM `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2`
+    WHERE aetna_county_nm IS NOT NULL AND submarket IS NOT NULL
+) m ON i.county_name = m.aetna_county_nm
 GROUP BY m.submarket, i.cms_specialty, i.plan_type
 ORDER BY m.submarket, i.cms_specialty, i.plan_type
 """
@@ -1683,8 +1692,11 @@ FROM (
     FROM `{PROJECT}.{DATASET}.{PREFIX}_provider_par_flag`
     GROUP BY county_name, cms_specialty, plan_type
 ) p
-JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
-    ON p.county_name = m.aetna_county_nm
+JOIN (
+    SELECT DISTINCT aetna_county_nm, submarket
+    FROM `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2`
+    WHERE aetna_county_nm IS NOT NULL AND submarket IS NOT NULL
+) m ON p.county_name = m.aetna_county_nm
 GROUP BY m.submarket, p.cms_specialty, p.plan_type
 ORDER BY m.submarket, p.cms_specialty, p.plan_type
 """
@@ -1715,8 +1727,11 @@ LEFT JOIN `{PROJECT}.{DATASET}.{PREFIX}_fact_gap_analysis_v2` f
     ON  i.county_name   = f.county_name
     AND i.cms_specialty = f.cms_specialty
     AND i.plan_type     = f.plan_type
-JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
-    ON i.county_name = m.aetna_county_nm
+JOIN (
+    SELECT DISTINCT aetna_county_nm, submarket
+    FROM `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2`
+    WHERE aetna_county_nm IS NOT NULL AND submarket IS NOT NULL
+) m ON i.county_name = m.aetna_county_nm
 WHERE COALESCE(i.cms_medicare_providers, 0) > 0
 GROUP BY m.submarket, i.cms_specialty, i.plan_type
 ORDER BY network_gap DESC, m.submarket, i.cms_specialty
@@ -2576,5 +2591,4 @@ if __name__ == "__main__":
 
     output = "medicare_supply_demand.xlsx"
     wb.save(output)
-    print(f"Saved: {output}")
     print(f"Saved: {output}")
