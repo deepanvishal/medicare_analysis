@@ -1512,6 +1512,150 @@ ORDER BY county_name, cms_specialty, plan_type, participation_status
 """
 
 
+COUNTY_SUBMARKET_QUERY = f"""
+SELECT DISTINCT
+    aetna_county_nm  AS county_name,
+    submarket
+FROM `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2`
+WHERE aetna_county_nm IS NOT NULL
+  AND submarket IS NOT NULL
+"""
+
+SUBMARKET_COMPLIANCE_QUERY = f"""
+SELECT
+    m.submarket,
+    f.county_type,
+    f.cms_specialty,
+    f.plan_type,
+    SUM(COALESCE(f.county_total_beneficiaries, 0))      AS county_total_beneficiaries,
+    SUM(COALESCE(f.required_provider_count, 0))         AS required_provider_count,
+    SUM(COALESCE(f.actual_count, 0))                    AS actual_count,
+    SUM(COALESCE(f.total_county_population, 0))         AS total_county_population,
+    SUM(COALESCE(f.population_with_access, 0))          AS population_with_access,
+    SAFE_DIVIDE(
+        SUM(COALESCE(f.population_with_access, 0)),
+        NULLIF(SUM(COALESCE(f.total_county_population, 0)), 0)
+    )                                                   AS pct_covered,
+    SUM(COALESCE(f.provider_gap, 0))                    AS provider_gap,
+    COUNTIF(f.compliance_status = 'COMPLIANT')          AS compliant_counties,
+    COUNTIF(f.compliance_status = 'NON-COMPLIANT')      AS non_compliant_counties,
+    COUNT(DISTINCT f.county_name)                       AS total_counties,
+    CASE
+        WHEN COUNTIF(f.compliance_status = 'NON-COMPLIANT') = 0
+        THEN 'ALL COMPLIANT'
+        WHEN COUNTIF(f.compliance_status = 'COMPLIANT') = 0
+        THEN 'ALL NON-COMPLIANT'
+        ELSE 'MIXED'
+    END                                                 AS submarket_status
+FROM `{PROJECT}.{DATASET}.{PREFIX}_fact_gap_analysis_v2` f
+JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
+    ON f.county_name = m.aetna_county_nm
+GROUP BY m.submarket, f.county_type, f.cms_specialty, f.plan_type
+ORDER BY submarket_status DESC, m.submarket, f.cms_specialty, f.plan_type
+"""
+
+SUBMARKET_SUMMARY_QUERY = f"""
+SELECT
+    m.submarket,
+    f.plan_type,
+    COUNT(DISTINCT f.county_name)                       AS total_counties,
+    COUNTIF(f.compliance_status = 'COMPLIANT')          AS compliant_specialty_counties,
+    COUNTIF(f.compliance_status = 'NON-COMPLIANT')      AS non_compliant_specialty_counties,
+    COUNT(*)                                            AS total_specialty_counties,
+    SAFE_DIVIDE(
+        COUNTIF(f.compliance_status = 'COMPLIANT'),
+        COUNT(*)
+    )                                                   AS pct_compliant,
+    COUNTIF(f.access_compliant = FALSE)                 AS access_failures,
+    COUNTIF(f.count_compliant = FALSE)                  AS count_failures
+FROM `{PROJECT}.{DATASET}.{PREFIX}_fact_gap_analysis_v2` f
+JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
+    ON f.county_name = m.aetna_county_nm
+GROUP BY m.submarket, f.plan_type
+ORDER BY pct_compliant ASC, m.submarket, f.plan_type
+"""
+
+SUBMARKET_INVENTORY_QUERY = f"""
+SELECT
+    m.submarket,
+    i.cms_specialty,
+    i.plan_type,
+    SUM(COALESCE(i.cms_medicare_providers, 0))          AS cms_available,
+    SUM(COALESCE(i.ma_contracted_providers, 0))         AS aetna_contracted,
+    SUM(COALESCE(i.aetna_participating_providers, 0))   AS aetna_active,
+    COUNT(DISTINCT i.county_name)                       AS county_count
+FROM `{PROJECT}.{DATASET}.{PREFIX}_week3_data_inventory` i
+JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
+    ON i.county_name = m.aetna_county_nm
+GROUP BY m.submarket, i.cms_specialty, i.plan_type
+ORDER BY m.submarket, i.cms_specialty, i.plan_type
+"""
+
+SUBMARKET_PAR_QUERY = f"""
+SELECT
+    m.submarket,
+    p.cms_specialty,
+    p.plan_type,
+    p.participation_status,
+    SUM(p.provider_count)                               AS provider_count,
+    SUM(p.total_claims)                                 AS total_claims,
+    ROUND(SUM(p.total_allowed_amt), 2)                  AS total_allowed_amt,
+    SUM(p.total_cms_benes)                              AS total_cms_benes,
+    ROUND(AVG(NULLIF(p.avg_cms_payment, 0)), 2)         AS avg_cms_payment
+FROM (
+    SELECT
+        county_name,
+        cms_specialty,
+        plan_type,
+        participation_status,
+        COUNT(DISTINCT provider_id)                     AS provider_count,
+        SUM(claim_count)                                AS total_claims,
+        ROUND(SUM(total_allowed_amt), 2)                AS total_allowed_amt,
+        SUM(tot_benes)                                  AS total_cms_benes,
+        ROUND(AVG(NULLIF(tot_mdcr_pymt_amt, 0)), 2)     AS avg_cms_payment
+    FROM `{PROJECT}.{DATASET}.{PREFIX}_provider_par_flag`
+    GROUP BY 1, 2, 3, 4
+) p
+JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
+    ON p.county_name = m.aetna_county_nm
+GROUP BY m.submarket, p.cms_specialty, p.plan_type, p.participation_status
+ORDER BY m.submarket, p.cms_specialty, p.plan_type, p.participation_status
+"""
+
+SUBMARKET_OPPORTUNITY_QUERY = f"""
+SELECT
+    m.submarket,
+    i.cms_specialty,
+    i.plan_type,
+    SUM(COALESCE(i.cms_medicare_providers, 0))
+        - SUM(COALESCE(i.ma_contracted_providers, 0))   AS network_gap,
+    SUM(COALESCE(i.cms_medicare_providers, 0))          AS cms_available,
+    SUM(COALESCE(i.ma_contracted_providers, 0))         AS aetna_contracted,
+    SUM(COALESCE(i.aetna_participating_providers, 0))   AS aetna_active,
+    SUM(COALESCE(f.required_provider_count, 0))         AS required_count,
+    SUM(COALESCE(f.actual_count, 0))                    AS actual_count,
+    SUM(COALESCE(f.provider_gap, 0))                    AS compliance_gap,
+    COUNT(DISTINCT i.county_name)                       AS county_count,
+    COUNTIF(f.compliance_status = 'COMPLIANT')          AS compliant_counties,
+    COUNTIF(f.compliance_status = 'NON-COMPLIANT')      AS non_compliant_counties,
+    CASE
+        WHEN COUNTIF(f.compliance_status = 'NON-COMPLIANT') = 0 THEN 'ALL COMPLIANT'
+        WHEN COUNTIF(f.compliance_status = 'COMPLIANT') = 0     THEN 'ALL NON-COMPLIANT'
+        ELSE 'MIXED'
+    END                                                 AS submarket_status
+FROM `{PROJECT}.{DATASET}.{PREFIX}_week3_data_inventory` i
+LEFT JOIN `{PROJECT}.{DATASET}.{PREFIX}_fact_gap_analysis_v2` f
+    ON  i.county_name   = f.county_name
+    AND i.cms_specialty = f.cms_specialty
+    AND i.plan_type     = f.plan_type
+JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
+    ON i.county_name = m.aetna_county_nm
+WHERE COALESCE(i.cms_medicare_providers, 0) > 0
+GROUP BY m.submarket, i.cms_specialty, i.plan_type
+ORDER BY network_gap DESC, m.submarket, i.cms_specialty
+"""
+
+
 # ── TAB 7: WEEK 3 DELIVERABLE 1 — DATA INVENTORY ─────────────
 
 def build_tab7(wb, df_inventory):
@@ -1705,6 +1849,509 @@ def build_tab8(wb, df_par):
 
     return ws
 
+
+# ── SUBMARKET TABS ────────────────────────────────────────────
+_SUBMARKET_DISCLAIMER = (
+    "NOTE: Submarket is an Aetna internal business grouping — not a CMS compliance unit. "
+    "CMS evaluates compliance at county level per 42 CFR 422.116. "
+    "These figures are operational rollups for network management purposes only."
+)
+
+def _disclaimer_row(ws, first_col, last_col, row=2):
+    ws.merge_cells(f"{first_col}{row}:{last_col}{row}")
+    cell(ws, f"{first_col}{row}", _SUBMARKET_DISCLAIMER,
+         size=8, italic=True, color="7F0000", bg="FFF9E6", h_align="left", wrap=True)
+    ws.row_dimensions[row].height = 24
+
+def _submarket_row_style(status):
+    if status == 'ALL COMPLIANT':
+        return 'E2EFDA', '375623', WHITE
+    if status == 'ALL NON-COMPLIANT':
+        return 'FFE0E0', 'C00000', WHITE
+    return 'FFF2CC', 'C55A11', WHITE
+
+
+def build_tab_submarket_compliance(wb, df):
+    ws = wb.create_sheet("Submarket Compliance")
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "B6"
+
+    col_widths = {
+        "A": 3,  "B": 16, "C": 14, "D": 28, "E": 10,
+        "F": 16, "G": 16, "H": 14, "I": 14,
+        "J": 18, "K": 20, "L": 18,
+        "M": 16, "N": 20, "O": 14, "P": 20,
+    }
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    ws.merge_cells("B1:P1")
+    cell(ws, "B1", "Medicare Supply Demand — Submarket Compliance Rollup",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
+    ws.row_dimensions[1].height = 35
+
+    _disclaimer_row(ws, "B", "P")
+
+    for rng, label, bg in [
+        ("B3:E3", "IDENTIFIERS",        DARK_GREY),
+        ("F3:I3", "CMS RULES ROLLUP",   MID_BLUE),
+        ("J3:L3", "POPULATION ROLLUP",  "C55A11"),
+        ("M3:P3", "COMPLIANCE ROLLUP",  DARK_BLUE),
+    ]:
+        ws.merge_cells(rng)
+        first = rng.split(":")[0]
+        cell(ws, first, label, bold=True, color=WHITE, bg=bg,
+             size=9, h_align="center")
+    ws.row_dimensions[3].height = 18
+
+    for ref, txt in [
+        ("F4", "SUM across counties in submarket"),
+        ("H4", "COUNT(DISTINCT provider_id) within distance, summed"),
+        ("I4", "SUM(required) - SUM(actual). Negative = net surplus."),
+        ("L4", "SUM(pop_with_access) / SUM(total_pop)"),
+        ("M4", "Counties where compliance_status = COMPLIANT"),
+        ("N4", "Counties where compliance_status = NON-COMPLIANT"),
+    ]:
+        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
+    ws.row_dimensions[4].height = 28
+
+    for ref, label, bg in [
+        ("B5", "Submarket",              DARK_GREY),
+        ("C5", "County Type",            DARK_GREY),
+        ("D5", "CMS Specialty",          DARK_GREY),
+        ("E5", "Plan Type",              DARK_GREY),
+        ("F5", "Total\nBeneficiaries",   MID_BLUE),
+        ("G5", "Required\nCount",        MID_BLUE),
+        ("H5", "Actual\nCount",          MID_BLUE),
+        ("I5", "Provider\nGap",          MID_BLUE),
+        ("J5", "Total\nPopulation",      "C55A11"),
+        ("K5", "Population\nw/ Access",  "C55A11"),
+        ("L5", "Pct w/\nAccess",         "C55A11"),
+        ("M5", "Compliant\nCounties",    DARK_BLUE),
+        ("N5", "Non-Compliant\nCounties",DARK_BLUE),
+        ("O5", "Total\nCounties",        DARK_BLUE),
+        ("P5", "Submarket\nStatus",      DARK_BLUE),
+    ]:
+        cell(ws, ref, label, bold=True, color=WHITE,
+             bg=bg, size=10, h_align="center", bdr=True)
+    ws.row_dimensions[5].height = 35
+
+    ws.auto_filter.ref = "B5:P5"
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        r = i + 6
+        status = str(row.get('submarket_status', '') or '')
+        row_bg, s_bg, s_color = _submarket_row_style(status)
+
+        data = [
+            ("B", row.get('submarket', ''),                              DARK_GREY, row_bg),
+            ("C", row.get('county_type', ''),                            DARK_GREY, row_bg),
+            ("D", row.get('cms_specialty', ''),                          DARK_GREY, row_bg),
+            ("E", row.get('plan_type', ''),                              DARK_GREY, row_bg),
+            ("F", _int(row.get('county_total_beneficiaries')),           MID_BLUE,  row_bg),
+            ("G", _int(row.get('required_provider_count')),              MID_BLUE,  row_bg),
+            ("H", _int(row.get('actual_count')),                         MID_BLUE,  row_bg),
+            ("I", _int(row.get('provider_gap')),                         MID_BLUE,  row_bg),
+            ("J", _int(row.get('total_county_population')),              "C55A11",  row_bg),
+            ("K", _int(row.get('population_with_access')),               "C55A11",  row_bg),
+            ("L", _float(row.get('pct_covered')),                        "C55A11",  row_bg),
+            ("M", _int(row.get('compliant_counties')),                   DARK_BLUE, row_bg),
+            ("N", _int(row.get('non_compliant_counties')),               DARK_BLUE, row_bg),
+            ("O", _int(row.get('total_counties')),                       DARK_BLUE, row_bg),
+            ("P", status,                                                s_color,   s_bg),
+        ]
+        for col, val, txt_color, bg_color in data:
+            c = ws[f"{col}{r}"]
+            c.value = val
+            c.font = Font(name="Arial", color=txt_color, size=9,
+                          bold=(col == "P"))
+            c.fill = fill(bg_color)
+            c.alignment = Alignment(
+                horizontal="left" if col in ("B", "C", "D") else "center",
+                vertical="center")
+            c.border = thin_border()
+        ws[f"L{r}"].number_format = "0.0%"
+        ws.row_dimensions[r].height = 15
+
+    return ws
+
+
+def build_tab_submarket_summary(wb, df):
+    ws = wb.create_sheet("Submarket Summary")
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "A5"
+
+    col_widths = {
+        "A": 3,  "B": 22, "C": 10, "D": 16, "E": 20,
+        "F": 24, "G": 18, "H": 16, "I": 16, "J": 16,
+    }
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    ws.merge_cells("B1:J1")
+    cell(ws, "B1", "Medicare Supply Demand — Submarket Compliance Summary",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
+    ws.row_dimensions[1].height = 35
+
+    _disclaimer_row(ws, "B", "J")
+
+    for ref, txt in [
+        ("B3", ""), ("C3", ""),
+        ("D3", "COUNT(DISTINCT county_name) in submarket"),
+        ("E3", "Specialty-county rows where compliance_status = COMPLIANT"),
+        ("F3", "Specialty-county rows where compliance_status = NON-COMPLIANT"),
+        ("G3", "Total specialty × county combinations"),
+        ("H3", "compliant / total"),
+        ("I3", "Rows failing pct_covered >= threshold"),
+        ("J3", "Rows failing actual_count >= required_count"),
+    ]:
+        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
+    ws.row_dimensions[3].height = 28
+
+    for ref, label, bg in [
+        ("B4", "Submarket",                       DARK_GREY),
+        ("C4", "Plan\nType",                      DARK_GREY),
+        ("D4", "Total\nCounties",                 DARK_BLUE),
+        ("E4", "Compliant\nSpecialty-Counties",   "375623"),
+        ("F4", "Non-Compliant\nSpecialty-Counties","C00000"),
+        ("G4", "Total\nSpecialty-Counties",        DARK_BLUE),
+        ("H4", "Pct\nCompliant",                   DARK_BLUE),
+        ("I4", "Access\nFailures",                 MID_BLUE),
+        ("J4", "Count\nFailures",                  MID_BLUE),
+    ]:
+        cell(ws, ref, label, bold=True, color=WHITE,
+             bg=bg, size=10, h_align="center", bdr=True)
+    ws.row_dimensions[4].height = 35
+
+    prev_sub = None
+    alt = True
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        r = i + 5
+        if row.get('submarket') != prev_sub:
+            alt = not alt
+            prev_sub = row.get('submarket')
+        pct = float(row.get('pct_compliant', 0) or 0)
+        if pct >= 0.9:
+            row_bg = "E2EFDA"
+        elif pct < 0.7:
+            row_bg = "FFE0E0"
+        else:
+            row_bg = YELLOW
+
+        data = [
+            ("B", row.get('submarket', ''),                                DARK_GREY, row_bg),
+            ("C", row.get('plan_type', ''),                                DARK_GREY, row_bg),
+            ("D", _int(row.get('total_counties')),                         DARK_BLUE, row_bg),
+            ("E", _int(row.get('compliant_specialty_counties')),           "375623",  "E2EFDA"),
+            ("F", _int(row.get('non_compliant_specialty_counties')),       "C00000",  "FFE0E0"),
+            ("G", _int(row.get('total_specialty_counties')),               DARK_BLUE, row_bg),
+            ("H", pct,                                                     DARK_BLUE, row_bg),
+            ("I", _int(row.get('access_failures')),                        MID_BLUE,  LIGHT_BLUE),
+            ("J", _int(row.get('count_failures')),                         MID_BLUE,  LIGHT_BLUE),
+        ]
+        for col, val, txt_color, bg_color in data:
+            c = ws[f"{col}{r}"]
+            c.value = val
+            c.font = Font(name="Arial", color=txt_color, size=10, bold=(col == "H"))
+            c.fill = fill(bg_color)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = thin_border()
+            if col == "H":
+                c.number_format = "0.0%"
+        ws.row_dimensions[r].height = 16
+
+    return ws
+
+
+def build_tab_submarket_inventory(wb, df):
+    ws = wb.create_sheet("Submarket Data Inventory")
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "A5"
+
+    col_widths = {
+        "A": 3,  "B": 22, "C": 28, "D": 10,
+        "E": 16, "F": 18, "G": 16, "H": 14,
+    }
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    ws.merge_cells("B1:H1")
+    cell(ws, "B1", "Medicare Supply Demand — Submarket Provider Data Inventory",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
+    ws.row_dimensions[1].height = 35
+
+    _disclaimer_row(ws, "B", "H")
+
+    for ref, txt in [
+        ("B3", ""), ("C3", ""), ("D3", ""),
+        ("E3", "COUNT(DISTINCT provider_id) accepting Original Medicare (CMS FFS 2023)",),
+        ("F3", "All providers in Aetna MA contracted network, summed across counties"),
+        ("G3", "Providers with at least 1 claim (allowed_amt > 0) in 2024-2025"),
+        ("H3", "COUNT(DISTINCT county_name) in submarket"),
+    ]:
+        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
+    ws.row_dimensions[3].height = 28
+
+    for ref, label, bg in [
+        ("B4", "Submarket",              DARK_GREY),
+        ("C4", "CMS Specialty",          DARK_GREY),
+        ("D4", "Plan\nType",             DARK_GREY),
+        ("E4", "CMS\nAvailable",         "C55A11"),
+        ("F4", "Aetna\nContracted",      MID_BLUE),
+        ("G4", "Aetna\nActive",          "375623"),
+        ("H4", "County\nCount",          DARK_BLUE),
+    ]:
+        cell(ws, ref, label, bold=True, color=WHITE,
+             bg=bg, size=10, h_align="center", bdr=True)
+    ws.row_dimensions[4].height = 35
+
+    prev_sub = None
+    alt = True
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        r = i + 5
+        if row.get('submarket') != prev_sub:
+            alt = not alt
+            prev_sub = row.get('submarket')
+        row_bg = GREY if alt else WHITE
+
+        data = [
+            ("B", row.get('submarket', ''),                   DARK_GREY, row_bg),
+            ("C", row.get('cms_specialty', ''),               DARK_GREY, row_bg),
+            ("D", row.get('plan_type', ''),                   DARK_GREY, row_bg),
+            ("E", _int(row.get('cms_available')),             "C55A11",  "FCE4D6"),
+            ("F", _int(row.get('aetna_contracted')),          MID_BLUE,  LIGHT_BLUE),
+            ("G", _int(row.get('aetna_active')),              "375623",  "E2EFDA"),
+            ("H", _int(row.get('county_count')),              DARK_BLUE, row_bg),
+        ]
+        for col, val, txt_color, bg_color in data:
+            c = ws[f"{col}{r}"]
+            c.value = val
+            c.font = Font(name="Arial", color=txt_color, size=9)
+            c.fill = fill(bg_color)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = thin_border()
+        ws.row_dimensions[r].height = 15
+
+    return ws
+
+
+def build_tab_submarket_par(wb, df):
+    ws = wb.create_sheet("Submarket Par Flags")
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "A5"
+
+    col_widths = {
+        "A": 3,  "B": 22, "C": 28, "D": 10, "E": 32,
+        "F": 16, "G": 18, "H": 18, "I": 18, "J": 18,
+    }
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    ws.merge_cells("B1:J1")
+    cell(ws, "B1", "Medicare Supply Demand — Submarket Par Flags",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
+    ws.row_dimensions[1].height = 35
+
+    _disclaimer_row(ws, "B", "J")
+
+    for ref, txt in [
+        ("B3", ""), ("C3", ""), ("D3", ""), ("E3", ""),
+        ("F3", "SUM of provider_count per status"),
+        ("G3", "SUM of claim_count for active providers"),
+        ("H3", "SUM of Aetna allowed amounts 2024-2025"),
+        ("I3", "SUM of CMS Medicare beneficiaries served (2023 FFS)"),
+        ("J3", "AVG CMS payment per provider (active only)"),
+    ]:
+        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
+    ws.row_dimensions[3].height = 28
+
+    for ref, label, bg in [
+        ("B4", "Submarket",            DARK_GREY),
+        ("C4", "CMS Specialty",        DARK_GREY),
+        ("D4", "Plan\nType",           DARK_GREY),
+        ("E4", "Participation Status", DARK_GREY),
+        ("F4", "Provider\nCount",      MID_BLUE),
+        ("G4", "Total\nClaims",        MID_BLUE),
+        ("H4", "Total Aetna\nAllowed", MID_BLUE),
+        ("I4", "CMS Benes\nServed",    "C55A11"),
+        ("J4", "Avg CMS\nPayment",     "C55A11"),
+    ]:
+        cell(ws, ref, label, bold=True, color=WHITE,
+             bg=bg, size=10, h_align="center", bdr=True)
+    ws.row_dimensions[4].height = 35
+
+    prev_key = None
+    alt = True
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        r = i + 5
+        key = (row.get('submarket', ''), row.get('cms_specialty', ''))
+        if key != prev_key:
+            alt = not alt
+            prev_key = key
+
+        status = str(row.get('participation_status', ''))
+        txt_c, status_bg = STATUS_COLORS.get(status, (DARK_GREY, GREY if alt else WHITE))
+        row_bg = GREY if alt else WHITE
+
+        data = [
+            ("B", row.get('submarket', ''),        DARK_GREY, row_bg),
+            ("C", row.get('cms_specialty', ''),    DARK_GREY, row_bg),
+            ("D", row.get('plan_type', ''),        DARK_GREY, row_bg),
+            ("E", status,                           txt_c,     status_bg),
+            ("F", _int(row.get('provider_count')), MID_BLUE,  LIGHT_BLUE),
+            ("G", _int(row.get('total_claims')),   MID_BLUE,  LIGHT_BLUE),
+            ("H", _float(row.get('total_allowed_amt')), MID_BLUE, LIGHT_BLUE),
+            ("I", _int(row.get('total_cms_benes')), "C55A11", "FCE4D6"),
+            ("J", _float(row.get('avg_cms_payment')), "C55A11", "FCE4D6"),
+        ]
+        for col, val, txt_color, bg_color in data:
+            c = ws[f"{col}{r}"]
+            c.value = val
+            c.font = Font(name="Arial", color=txt_color, size=9,
+                          bold=(col == "E"))
+            c.fill = fill(bg_color)
+            c.alignment = Alignment(
+                horizontal="left" if col in ("B", "C", "E") else "center",
+                vertical="center")
+            c.border = thin_border()
+            if col in ("H", "J"):
+                c.number_format = "#,##0.00"
+        ws.row_dimensions[r].height = 15
+
+    return ws
+
+
+def build_tab_submarket_opportunity(wb, df):
+    ws = wb.create_sheet("Submarket Opportunity")
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "A5"
+
+    col_widths = {
+        "A": 3,  "B": 22, "C": 28, "D": 10, "E": 14,
+        "F": 16, "G": 18, "H": 16, "I": 14,
+        "J": 16, "K": 14, "L": 14,
+        "M": 20, "N": 24, "O": 20,
+    }
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    ws.merge_cells("B1:O1")
+    cell(ws, "B1", "Medicare Supply Demand — Submarket Network Opportunity",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
+    ws.row_dimensions[1].height = 35
+
+    _disclaimer_row(ws, "B", "O")
+
+    for ref, txt in [
+        ("B3", ""), ("C3", ""), ("D3", ""),
+        ("E3", "COUNT(DISTINCT county_name) in submarket"),
+        ("F3", "Providers accepting Original Medicare (CMS FFS 2023)"),
+        ("G3", "All providers in Aetna MA contracted network"),
+        ("H3", "Providers with Aetna claims (allowed_amt > 0) 2024-2025"),
+        ("I3", "CMS Available - Aetna Contracted. Positive = providers not yet contracted."),
+        ("J3", "From ref_hsd_required_counts"),
+        ("K3", "COUNT(DISTINCT provider_id) within CMS distance threshold"),
+        ("L3", "required_count - actual_count. Negative = surplus."),
+        ("M3", "Counties where compliance_status = COMPLIANT"),
+        ("N3", "Counties where compliance_status = NON-COMPLIANT"),
+    ]:
+        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
+    ws.row_dimensions[3].height = 28
+
+    for ref, label, bg in [
+        ("B4", "Submarket",              DARK_GREY),
+        ("C4", "CMS Specialty",          DARK_GREY),
+        ("D4", "Plan\nType",             DARK_GREY),
+        ("E4", "County\nCount",          DARK_BLUE),
+        ("F4", "CMS\nAvailable",         "C55A11"),
+        ("G4", "Aetna\nContracted",      MID_BLUE),
+        ("H4", "Aetna\nActive",          "375623"),
+        ("I4", "Network\nGap",           "C00000"),
+        ("J4", "Required\nCount",        DARK_BLUE),
+        ("K4", "Actual\nCount",          DARK_BLUE),
+        ("L4", "Compliance\nGap",        DARK_BLUE),
+        ("M4", "Compliant\nCounties",    "375623"),
+        ("N4", "Non-Compliant\nCounties","C00000"),
+        ("O4", "Submarket\nStatus",      DARK_BLUE),
+    ]:
+        cell(ws, ref, label, bold=True, color=WHITE,
+             bg=bg, size=10, h_align="center", bdr=True)
+    ws.row_dimensions[4].height = 35
+
+    prev_sub = None
+    alt = True
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        r = i + 5
+        if row.get('submarket') != prev_sub:
+            alt = not alt
+            prev_sub = row.get('submarket')
+        row_bg = GREY if alt else WHITE
+
+        status = str(row.get('submarket_status', '') or '')
+        _, s_bg, s_color = _submarket_row_style(status)
+
+        net_gap = _int(row.get('network_gap'))
+        gap_color = "C55A11" if net_gap > 0 else "375623"
+
+        data = [
+            ("B", row.get('submarket', ''),          DARK_GREY, row_bg),
+            ("C", row.get('cms_specialty', ''),      DARK_GREY, row_bg),
+            ("D", row.get('plan_type', ''),          DARK_GREY, row_bg),
+            ("E", _int(row.get('county_count')),     DARK_BLUE, row_bg),
+            ("F", _int(row.get('cms_available')),    "C55A11",  "FCE4D6"),
+            ("G", _int(row.get('aetna_contracted')), MID_BLUE,  LIGHT_BLUE),
+            ("H", _int(row.get('aetna_active')),     "375623",  "E2EFDA"),
+            ("I", net_gap,                            gap_color, row_bg),
+            ("J", _int(row.get('required_count')),   DARK_BLUE, row_bg),
+            ("K", _int(row.get('actual_count')),     DARK_BLUE, row_bg),
+            ("L", _int(row.get('compliance_gap')),   DARK_BLUE, row_bg),
+            ("M", _int(row.get('compliant_counties')), "375623","E2EFDA"),
+            ("N", _int(row.get('non_compliant_counties')), "C00000","FFE0E0"),
+            ("O", status,                             s_color,   s_bg),
+        ]
+        for col, val, txt_color, bg_color in data:
+            c = ws[f"{col}{r}"]
+            c.value = val
+            c.font = Font(name="Arial", color=txt_color, size=9,
+                          bold=(col in ("I", "O")))
+            c.fill = fill(bg_color)
+            c.alignment = Alignment(
+                horizontal="left" if col in ("B", "C") else "center",
+                vertical="center")
+            c.border = thin_border()
+        ws.row_dimensions[r].height = 15
+
+    # summary row
+    last_data = len(df) + 4
+    summary_r = last_data + 2
+    ws.row_dimensions[summary_r].height = 18
+    ws.merge_cells(f"B{summary_r}:D{summary_r}")
+    cell(ws, f"B{summary_r}", "TOTAL (all submarkets)",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=10, h_align="center", bdr=True)
+    for col, field in [
+        ("E", "county_count"), ("F", "cms_available"), ("G", "aetna_contracted"),
+        ("H", "aetna_active"), ("I", "network_gap"),
+        ("J", "required_count"), ("K", "actual_count"), ("L", "compliance_gap"),
+        ("M", "compliant_counties"), ("N", "non_compliant_counties"),
+    ]:
+        val = int(df[field].sum()) if field in df.columns else 0
+        is_gap = col in ("I", "L")
+        clr = ("C55A11" if val > 0 else "375623") if is_gap else WHITE
+        c = ws[f"{col}{summary_r}"]
+        c.value = val
+        c.font = Font(name="Arial", color=clr, size=10, bold=True)
+        c.fill = fill(DARK_BLUE)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = thin_border()
+    ws[f"O{summary_r}"].fill = fill(DARK_BLUE)
+
+    return ws
+
+
 if __name__ == "__main__":
     client = bigquery.Client(project=CLIENT_PROJECT)
 
@@ -1719,6 +2366,30 @@ if __name__ == "__main__":
     print("Querying county summary...")
     df_county = client.query(SUMMARY_COUNTY_QUERY).to_dataframe()
     print(f"  {len(df_county):,} rows")
+
+    print("Querying county-submarket mapping...")
+    df_submarket_map = client.query(COUNTY_SUBMARKET_QUERY).to_dataframe()
+    print(f"  {len(df_submarket_map):,} county-submarket pairs")
+
+    print("Querying submarket compliance...")
+    df_sub_compliance = client.query(SUBMARKET_COMPLIANCE_QUERY).to_dataframe()
+    print(f"  {len(df_sub_compliance):,} rows")
+
+    print("Querying submarket summary...")
+    df_sub_summary = client.query(SUBMARKET_SUMMARY_QUERY).to_dataframe()
+    print(f"  {len(df_sub_summary):,} rows")
+
+    print("Querying submarket inventory...")
+    df_sub_inventory = client.query(SUBMARKET_INVENTORY_QUERY).to_dataframe()
+    print(f"  {len(df_sub_inventory):,} rows")
+
+    print("Querying submarket par flags...")
+    df_sub_par = client.query(SUBMARKET_PAR_QUERY).to_dataframe()
+    print(f"  {len(df_sub_par):,} rows")
+
+    print("Querying submarket opportunity...")
+    df_sub_opp = client.query(SUBMARKET_OPPORTUNITY_QUERY).to_dataframe()
+    print(f"  {len(df_sub_opp):,} rows")
 
     wb = Workbook()
     wb.remove(wb.active)
@@ -1739,11 +2410,17 @@ if __name__ == "__main__":
     print("Building Tab 4...")
     build_tab2(wb, df)
 
+    print("Building Submarket Compliance tab...")
+    build_tab_submarket_compliance(wb, df_sub_compliance)
+
     print("Building Tab 5...")
     build_tab3(wb, df_summary)
 
     print("Building Tab 6...")
     build_tab4(wb, df_county)
+
+    print("Building Submarket Summary tab...")
+    build_tab_submarket_summary(wb, df_sub_summary)
 
     print("Building Tab 7...")
     build_tab5(wb)
@@ -1765,8 +2442,17 @@ if __name__ == "__main__":
     print("Building Tab 10...")
     build_tab7(wb, df_inventory)
 
+    print("Building Submarket Data Inventory tab...")
+    build_tab_submarket_inventory(wb, df_sub_inventory)
+
     print("Building Tab 11...")
     build_tab8(wb, df_par)
+
+    print("Building Submarket Par Flags tab...")
+    build_tab_submarket_par(wb, df_sub_par)
+
+    print("Building Submarket Opportunity tab...")
+    build_tab_submarket_opportunity(wb, df_sub_opp)
 
     output = "medicare_supply_demand.xlsx"
     wb.save(output)
