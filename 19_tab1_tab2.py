@@ -412,10 +412,84 @@ def build_tab_county_mapping(wb):
     return ws
 
 
-# ── TAB 3: COMPLIANCE REPORT ──────────────────────────────────
+# ── TAB 3: COUNTY TYPE VALIDATION ────────────────────────────
+
+def build_tab_county_type_validation(wb, df_county_type):
+    ws = wb.create_sheet("3. County Type Validation")
+    ws.sheet_view.showGridLines = False
+    ws.freeze_panes = "A4"
+
+    col_widths = {
+        "A": 3, "B": 22, "C": 14, "D": 14, "E": 16, "F": 18, "G": 20, "H": 14,
+    }
+    for col, w in col_widths.items():
+        ws.column_dimensions[col].width = w
+
+    ws.merge_cells("B1:H1")
+    cell(ws, "B1", "Florida County Type Classification — Census vs CMS HSD",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
+    ws.row_dimensions[1].height = 35
+
+    for ref, txt in [
+        ("B2", "geo_us_boundaries.counties"),
+        ("C2", "census_bureau_acs.county_2020_5yr"),
+        ("D2", "geo_us_boundaries.counties  |  area_land_meters / 2589988.11"),
+        ("E2", "total_pop / area_sq_miles"),
+        ("F2", "ref_county_classification  |  STEP 3 CASE logic"),
+        ("G2", "ref_hsd_required_counts  |  county_type"),
+        ("H2", "census_derived_type = hsd_official_type"),
+    ]:
+        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
+    ws.row_dimensions[2].height = 22
+
+    for ref, label in [
+        ("B3", "County"),
+        ("C3", "Population"),
+        ("D3", "Area (sq mi)"),
+        ("E3", "Density (pop/sq mi)"),
+        ("F3", "Census Derived Type"),
+        ("G3", "CMS HSD Official Type"),
+        ("H3", "Status"),
+    ]:
+        cell(ws, ref, label, bold=True, color=WHITE,
+             bg=MID_BLUE, size=10, h_align="center", bdr=True)
+    ws.row_dimensions[3].height = 24
+
+    for i, row_data in enumerate(df_county_type.itertuples(index=False)):
+        r = i + 4
+        ws.row_dimensions[r].height = 15
+        row_bg = GREY if i % 2 == 0 else WHITE
+
+        status      = str(row_data.status) if row_data.status is not None else ""
+        is_match    = status == "MATCH"
+        status_bg   = "E2EFDA" if is_match else "FFE0E0"
+        status_color = "375623" if is_match else "C00000"
+
+        cell(ws, f"B{r}", row_data.county_name,   size=9, bg=row_bg, bdr=True)
+        cell(ws, f"C{r}", _int(row_data.population),
+             size=9, bg=row_bg, bdr=True, h_align="right")
+        cell(ws, f"D{r}", _float(row_data.area_sq_miles),
+             size=9, bg=row_bg, bdr=True, h_align="right")
+        cell(ws, f"E{r}", _float(row_data.pop_density),
+             size=9, bg=row_bg, bdr=True, h_align="right")
+        cell(ws, f"F{r}", str(row_data.census_derived_type) if row_data.census_derived_type is not None else "",
+             size=9, bg=row_bg, bdr=True)
+        cell(ws, f"G{r}", str(row_data.hsd_official_type) if row_data.hsd_official_type is not None else "",
+             size=9, bg=row_bg, bdr=True)
+        cell(ws, f"H{r}", status,
+             size=9, bold=True, color=status_color, bg=status_bg, bdr=True, h_align="center")
+
+        ws[f"C{r}"].number_format = "#,##0"
+        ws[f"D{r}"].number_format = "#,##0.0"
+        ws[f"E{r}"].number_format = "#,##0.0"
+
+    return ws
+
+
+# ── TAB 4: COMPLIANCE REPORT ──────────────────────────────────
 
 def build_tab2(wb, df):
-    ws = wb.create_sheet("3. Compliance Report")
+    ws = wb.create_sheet("4. Compliance Report")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -638,7 +712,7 @@ ORDER BY pct_compliant ASC, cms_specialty, plan_type
 # ── TAB 3: SUMMARY BY PLAN × SPECIALTY ───────────────────────
 
 def build_tab3(wb, df_summary):
-    ws = wb.create_sheet("4. Summary by Specialty")
+    ws = wb.create_sheet("5. Summary by Specialty")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -757,7 +831,7 @@ def build_tab3(wb, df_summary):
 # ── TAB 4: SUMMARY BY PLAN × COUNTY ──────────────────────────
 
 def build_tab4(wb, df_county):
-    ws = wb.create_sheet("5. Summary by County")
+    ws = wb.create_sheet("6. Summary by County")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -865,7 +939,7 @@ def build_tab4(wb, df_county):
 # ── TAB 5: DATA DICTIONARY ────────────────────────────────────
 
 def build_tab5(wb):
-    ws = wb.create_sheet("6. Data Dictionary")
+    ws = wb.create_sheet("7. Data Dictionary")
     ws.sheet_view.showGridLines = False
 
     ws.column_dimensions["A"].width = 3
@@ -935,7 +1009,7 @@ def build_tab5(wb):
 # ── TAB 6: CMS RULES ─────────────────────────────────────────
 
 def build_tab6(wb):
-    ws = wb.create_sheet("7. CMS Rules")
+    ws = wb.create_sheet("8. CMS Rules")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A4"
 
@@ -1052,7 +1126,7 @@ def build_tab6(wb):
 # ── TAB 7: MEDICARE DATA SOURCING ─────────────────────────────
 
 def build_tab_data_sourcing(wb):
-    ws = wb.create_sheet("8. Medicare Data Sourcing")
+    ws = wb.create_sheet("9. Medicare Data Sourcing")
     ws.sheet_view.showGridLines = False
 
     ws.column_dimensions["A"].width = 3
@@ -1321,6 +1395,94 @@ GROUP BY county_name, county_type, plan_type
 ORDER BY pct_compliant ASC, county_name, plan_type
 """
 
+COUNTY_TYPE_VALIDATION_QUERY = f"""
+WITH raw_counties AS (
+  SELECT
+    geo_id                                                           AS county_fips,
+    county_name,
+    area_land_meters / 2589988.11                                   AS area_sq_miles
+  FROM `bigquery-public-data.geo_us_boundaries.counties`
+  WHERE state_fips_code = '12'
+),
+
+population AS (
+  SELECT
+    geo_id                                                           AS county_fips,
+    total_pop
+  FROM `bigquery-public-data.census_bureau_acs.county_2020_5yr`
+  WHERE LEFT(geo_id, 2) = '12'
+),
+
+joined AS (
+  SELECT
+    r.county_fips,
+    r.county_name,
+    r.area_sq_miles,
+    p.total_pop                                                      AS population,
+    ROUND(p.total_pop / NULLIF(r.area_sq_miles, 0), 2)             AS pop_density
+  FROM raw_counties r
+  LEFT JOIN population p USING (county_fips)
+),
+
+classified AS (
+  SELECT
+    *,
+    CASE
+      WHEN (population >= 1000000 AND pop_density >= 1000)
+        OR (population >= 500000  AND pop_density >= 1500)
+        OR (pop_density >= 5000)                                     THEN 'Large Metro'
+      WHEN (population >= 1000000 AND pop_density >= 10)
+        OR (population >= 500000  AND pop_density >= 10)
+        OR (population >= 200000  AND pop_density >= 10)
+        OR (population >= 50000   AND pop_density >= 100)
+        OR (population >= 10000   AND pop_density >= 1000)          THEN 'Metro'
+      WHEN (population >= 50000   AND pop_density >= 10)
+        OR (population >= 10000   AND pop_density >= 50)            THEN 'Micro'
+      WHEN pop_density < 10                                          THEN 'CEAC'
+      WHEN (population >= 10000   AND pop_density >= 10)
+        OR (population < 10000    AND pop_density >= 50)            THEN 'Rural'
+      ELSE 'Rural'
+    END                                                              AS census_derived_type
+  FROM joined
+),
+
+hsd_types AS (
+  SELECT DISTINCT
+    county_name,
+    county_type                                                      AS hsd_official_type
+  FROM `{PROJECT}.{DATASET}.{PREFIX}_ref_hsd_required_counts`
+),
+
+xwalk AS (
+  SELECT
+    aetna_county_nm,
+    census_county_nm
+  FROM `{PROJECT}.{DATASET}.{PREFIX}_ref_county_name_crosswalk`
+)
+
+SELECT
+  c.county_fips,
+  c.county_name,
+  c.population,
+  ROUND(c.area_sq_miles, 2)                                         AS area_sq_miles,
+  c.pop_density,
+  c.census_derived_type,
+  h.hsd_official_type,
+  CASE
+    WHEN c.census_derived_type = h.hsd_official_type               THEN 'MATCH'
+    ELSE                                                                 'MISMATCH'
+  END                                                                AS status,
+  CASE
+    WHEN c.census_derived_type != h.hsd_official_type
+      THEN CONCAT('Census: ', c.census_derived_type, ' | HSD: ', h.hsd_official_type)
+    ELSE NULL
+  END                                                                AS discrepancy_note
+FROM classified c
+LEFT JOIN xwalk       ON c.county_name          = xwalk.census_county_nm
+LEFT JOIN hsd_types h ON xwalk.census_county_nm = h.county_name
+ORDER BY status DESC, c.county_name
+"""
+
 INVENTORY_QUERY = f"""
 SELECT
   cms_specialty,
@@ -1353,7 +1515,7 @@ ORDER BY county_name, cms_specialty, plan_type, participation_status
 # ── TAB 7: WEEK 3 DELIVERABLE 1 — DATA INVENTORY ─────────────
 
 def build_tab7(wb, df_inventory):
-    ws = wb.create_sheet("9. W3 Data Inventory")
+    ws = wb.create_sheet("10. W3 Data Inventory")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -1447,7 +1609,7 @@ STATUS_COLORS = {
 }
 
 def build_tab8(wb, df_par):
-    ws = wb.create_sheet("10. W3 Par Flags")
+    ws = wb.create_sheet("11. W3 Par Flags")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -1567,22 +1729,29 @@ if __name__ == "__main__":
     print("Building Tab 2 (County Mapping)...")
     build_tab_county_mapping(wb)
 
-    print("Building Tab 3...")
-    build_tab2(wb, df)
+    print("Querying county type validation...")
+    df_county_type = client.query(COUNTY_TYPE_VALIDATION_QUERY).to_dataframe()
+    print(f"  {len(df_county_type):,} rows")
 
-    print("Building Tab 3...")
-    build_tab3(wb, df_summary)
+    print("Building Tab 3 (County Type Validation)...")
+    build_tab_county_type_validation(wb, df_county_type)
 
     print("Building Tab 4...")
-    build_tab4(wb, df_county)
+    build_tab2(wb, df)
 
     print("Building Tab 5...")
-    build_tab5(wb)
+    build_tab3(wb, df_summary)
 
     print("Building Tab 6...")
-    build_tab6(wb)
+    build_tab4(wb, df_county)
 
     print("Building Tab 7...")
+    build_tab5(wb)
+
+    print("Building Tab 8...")
+    build_tab6(wb)
+
+    print("Building Tab 9...")
     build_tab_data_sourcing(wb)
 
     print("Querying Week 3 data inventory...")
@@ -1593,10 +1762,10 @@ if __name__ == "__main__":
     df_par = client.query(PAR_FLAG_QUERY).to_dataframe()
     print(f"  {len(df_par):,} rows")
 
-    print("Building Tab 8...")
+    print("Building Tab 10...")
     build_tab7(wb, df_inventory)
 
-    print("Building Tab 9...")
+    print("Building Tab 11...")
     build_tab8(wb, df_par)
 
     output = "medicare_supply_demand.xlsx"
