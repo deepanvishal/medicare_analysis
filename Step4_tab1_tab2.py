@@ -1497,18 +1497,50 @@ ORDER BY county_name, cms_specialty, plan_type
 
 PAR_FLAG_QUERY = f"""
 SELECT
-  county_name,
-  cms_specialty,
-  plan_type,
-  participation_status,
-  COUNT(DISTINCT provider_id)            AS provider_count,
-  SUM(claim_count)                       AS total_claims,
-  ROUND(SUM(total_allowed_amt), 2)       AS total_allowed_amt,
-  SUM(tot_benes)                         AS total_cms_benes,
-  ROUND(AVG(NULLIF(tot_mdcr_pymt_amt, 0)), 2) AS avg_cms_payment
+    county_name,
+    cms_specialty,
+    plan_type,
+    COUNT(DISTINCT provider_id)                                           AS contracted_total,
+    COUNT(DISTINCT CASE
+        WHEN participation_status IN (
+            'ACTIVE BOTH',
+            'AETNA ACTIVE - NO NPI MATCH',
+            'AETNA ACTIVE - NOT IN ORIGINAL MEDICARE')
+        THEN provider_id END)                                             AS aetna_par,
+    COUNT(DISTINCT CASE
+        WHEN participation_status IN (
+            'ACTIVE BOTH',
+            'CONTRACTED NOT ACTIVE - IN ORIGINAL MEDICARE')
+        THEN provider_id END)                                             AS cms_medicare,
+    COUNT(DISTINCT CASE
+        WHEN participation_status = 'ACTIVE BOTH'
+        THEN provider_id END)                                             AS both_par,
+    SUM(CASE
+        WHEN participation_status IN (
+            'ACTIVE BOTH',
+            'AETNA ACTIVE - NO NPI MATCH',
+            'AETNA ACTIVE - NOT IN ORIGINAL MEDICARE')
+        THEN COALESCE(claim_count, 0) ELSE 0 END)                        AS aetna_total_claims,
+    ROUND(SUM(CASE
+        WHEN participation_status IN (
+            'ACTIVE BOTH',
+            'AETNA ACTIVE - NO NPI MATCH',
+            'AETNA ACTIVE - NOT IN ORIGINAL MEDICARE')
+        THEN COALESCE(total_allowed_amt, 0) ELSE 0 END), 2)              AS aetna_total_allowed,
+    SUM(CASE
+        WHEN participation_status IN (
+            'ACTIVE BOTH',
+            'CONTRACTED NOT ACTIVE - IN ORIGINAL MEDICARE')
+        THEN COALESCE(tot_benes, 0) ELSE 0 END)                          AS cms_total_benes,
+    ROUND(AVG(CASE
+        WHEN participation_status IN (
+            'ACTIVE BOTH',
+            'CONTRACTED NOT ACTIVE - IN ORIGINAL MEDICARE')
+            AND tot_mdcr_pymt_amt > 0
+        THEN tot_mdcr_pymt_amt END), 2)                                   AS cms_avg_payment
 FROM `{PROJECT}.{DATASET}.{PREFIX}_provider_par_flag`
-GROUP BY county_name, cms_specialty, plan_type, participation_status
-ORDER BY county_name, cms_specialty, plan_type, participation_status
+GROUP BY county_name, cms_specialty, plan_type
+ORDER BY county_name, cms_specialty, plan_type
 """
 
 
@@ -1596,30 +1628,65 @@ SELECT
     m.submarket,
     p.cms_specialty,
     p.plan_type,
-    p.participation_status,
-    SUM(p.provider_count)                               AS provider_count,
-    SUM(p.total_claims)                                 AS total_claims,
-    ROUND(SUM(p.total_allowed_amt), 2)                  AS total_allowed_amt,
-    SUM(p.total_cms_benes)                              AS total_cms_benes,
-    ROUND(AVG(NULLIF(p.avg_cms_payment, 0)), 2)         AS avg_cms_payment
+    COUNT(DISTINCT p.county_name)                                         AS county_count,
+    SUM(p.contracted_total)                                               AS contracted_total,
+    SUM(p.aetna_par)                                                      AS aetna_par,
+    SUM(p.cms_medicare)                                                   AS cms_medicare,
+    SUM(p.both_par)                                                       AS both_par,
+    SUM(p.aetna_total_claims)                                             AS aetna_total_claims,
+    ROUND(SUM(p.aetna_total_allowed), 2)                                  AS aetna_total_allowed,
+    SUM(p.cms_total_benes)                                                AS cms_total_benes,
+    ROUND(AVG(NULLIF(p.cms_avg_payment, 0)), 2)                           AS cms_avg_payment
 FROM (
     SELECT
         county_name,
         cms_specialty,
         plan_type,
-        participation_status,
-        COUNT(DISTINCT provider_id)                     AS provider_count,
-        SUM(claim_count)                                AS total_claims,
-        ROUND(SUM(total_allowed_amt), 2)                AS total_allowed_amt,
-        SUM(tot_benes)                                  AS total_cms_benes,
-        ROUND(AVG(NULLIF(tot_mdcr_pymt_amt, 0)), 2)     AS avg_cms_payment
+        COUNT(DISTINCT provider_id)                                       AS contracted_total,
+        COUNT(DISTINCT CASE
+            WHEN participation_status IN (
+                'ACTIVE BOTH',
+                'AETNA ACTIVE - NO NPI MATCH',
+                'AETNA ACTIVE - NOT IN ORIGINAL MEDICARE')
+            THEN provider_id END)                                         AS aetna_par,
+        COUNT(DISTINCT CASE
+            WHEN participation_status IN (
+                'ACTIVE BOTH',
+                'CONTRACTED NOT ACTIVE - IN ORIGINAL MEDICARE')
+            THEN provider_id END)                                         AS cms_medicare,
+        COUNT(DISTINCT CASE
+            WHEN participation_status = 'ACTIVE BOTH'
+            THEN provider_id END)                                         AS both_par,
+        SUM(CASE
+            WHEN participation_status IN (
+                'ACTIVE BOTH',
+                'AETNA ACTIVE - NO NPI MATCH',
+                'AETNA ACTIVE - NOT IN ORIGINAL MEDICARE')
+            THEN COALESCE(claim_count, 0) ELSE 0 END)                    AS aetna_total_claims,
+        ROUND(SUM(CASE
+            WHEN participation_status IN (
+                'ACTIVE BOTH',
+                'AETNA ACTIVE - NO NPI MATCH',
+                'AETNA ACTIVE - NOT IN ORIGINAL MEDICARE')
+            THEN COALESCE(total_allowed_amt, 0) ELSE 0 END), 2)          AS aetna_total_allowed,
+        SUM(CASE
+            WHEN participation_status IN (
+                'ACTIVE BOTH',
+                'CONTRACTED NOT ACTIVE - IN ORIGINAL MEDICARE')
+            THEN COALESCE(tot_benes, 0) ELSE 0 END)                      AS cms_total_benes,
+        ROUND(AVG(CASE
+            WHEN participation_status IN (
+                'ACTIVE BOTH',
+                'CONTRACTED NOT ACTIVE - IN ORIGINAL MEDICARE')
+                AND tot_mdcr_pymt_amt > 0
+            THEN tot_mdcr_pymt_amt END), 2)                              AS cms_avg_payment
     FROM `{PROJECT}.{DATASET}.{PREFIX}_provider_par_flag`
-    GROUP BY 1, 2, 3, 4
+    GROUP BY county_name, cms_specialty, plan_type
 ) p
 JOIN `{PROJECT}.{DATASET}.{PREFIX}_stg_providers_multi_specialty_v2` m
     ON p.county_name = m.aetna_county_nm
-GROUP BY m.submarket, p.cms_specialty, p.plan_type, p.participation_status
-ORDER BY m.submarket, p.cms_specialty, p.plan_type, p.participation_status
+GROUP BY m.submarket, p.cms_specialty, p.plan_type
+ORDER BY m.submarket, p.cms_specialty, p.plan_type
 """
 
 SUBMARKET_OPPORTUNITY_QUERY = f"""
@@ -1755,98 +1822,122 @@ STATUS_COLORS = {
 def build_tab8(wb, df_par):
     ws = wb.create_sheet("11. W3 Par Flags")
     ws.sheet_view.showGridLines = False
-    ws.freeze_panes = "A5"
+    ws.freeze_panes = "A6"
 
     col_widths = {
-        "A": 22, "B": 30, "C": 12,
-        "D": 44, "E": 14,
-        "F": 14, "G": 18, "H": 16, "I": 18,
+        "A": 22, "B": 28, "C": 10,
+        "D": 16, "E": 14, "F": 14, "G": 12,
+        "H": 16, "I": 18, "J": 16, "K": 16,
     }
     for col, w in col_widths.items():
         ws.column_dimensions[col].width = w
 
     # title
-    ws.merge_cells("A1:I1")
-    cell(ws, "A1", "Medicare Supply Demand — Week 3 Deliverable 3: Provider Participation Flags",
+    ws.merge_cells("A1:K1")
+    cell(ws, "A1", "Medicare Supply Demand — Provider Participation Summary",
          bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
     ws.row_dimensions[1].height = 35
 
     # subtitle
-    ws.merge_cells("A2:I2")
+    ws.merge_cells("A2:K2")
     cell(ws, "A2",
-         "Grain: County × CMS Specialty × Plan Type × Participation Status  |  "
-         "Participation = Aetna claims activity (2024-2025) + CMS Original Medicare flag",
-         size=9, color="666666", bg="F9F9F9", italic=True, h_align="left")
-    ws.row_dimensions[2].height = 18
+         "Grain: County x CMS Specialty x Plan Type  |  "
+         "Aetna Par = provider had >=1 Aetna claim with allowed_amt > 0 (2024-2025)  |  "
+         "CMS Medicare = provider appears in CMS Medicare FFS 2023 (original_medicare_flag = Y)  |  "
+         "Both = provider meets both criteria",
+         size=9, color="666666", bg="F9F9F9", italic=True, h_align="left", wrap=True)
+    ws.row_dimensions[2].height = 22
 
-    # callouts
+    # color band labels row 3
+    for rng, text, bg in [
+        ("A3:C3", "  IDENTIFIERS",      DARK_GREY),
+        ("D3:G3", "  PROVIDER COUNTS",  MID_BLUE),
+        ("H3:I3", "  AETNA ACTIVITY",   "375623"),
+        ("J3:K3", "  CMS ACTIVITY",     "C55A11"),
+    ]:
+        ws.merge_cells(rng)
+        cell(ws, rng.split(":")[0], text,
+             bold=True, color=WHITE, bg=bg, size=9, h_align="left")
+    ws.row_dimensions[3].height = 16
+
+    # callouts row 4
     callouts = {
-        "A3": "", "B3": "", "C3": "", "D3": "",
-        "E3": "COUNT(DISTINCT provider_id) per status",
-        "F3": "SUM of claim_count for active providers",
-        "G3": "SUM of Aetna allowed amounts 2024-2025",
-        "H3": "SUM of CMS Medicare beneficiaries served (2023 FFS)",
-        "I3": "AVG CMS payment per provider (active only)",
+        "A4": "", "B4": "", "C4": "",
+        "D4": "All contracted providers in Aetna MA network",
+        "E4": "Aetna claims activity 2024-2025 (has_claims_flag = 1)",
+        "F4": "CMS Medicare FFS 2023 (original_medicare_flag = Y)",
+        "G4": "Aetna active AND in CMS Medicare",
+        "H4": "SUM of Aetna claim count for Aetna Par providers",
+        "I4": "SUM of Aetna allowed amounts for Aetna Par providers",
+        "J4": "SUM of CMS Medicare beneficiaries for CMS Medicare providers",
+        "K4": "AVG CMS Medicare payment for CMS Medicare providers",
     }
     for ref, txt in callouts.items():
-        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
-    ws.row_dimensions[3].height = 28
+        cell(ws, ref, txt, size=8, color="666666",
+             bg="F9F9F9", italic=True, wrap=True)
+    ws.row_dimensions[4].height = 28
 
-    # headers
+    # headers row 5
     headers = [
-        ("A4", "County",               DARK_GREY),
-        ("B4", "CMS Specialty",        DARK_GREY),
-        ("C4", "Plan Type",            DARK_GREY),
-        ("D4", "Participation Status", DARK_GREY),
-        ("E4", "Provider\nCount",      MID_BLUE),
-        ("F4", "Total\nClaims",        MID_BLUE),
-        ("G4", "Total Aetna\nAllowed", MID_BLUE),
-        ("H4", "CMS Benes\nServed",    "C55A11"),
-        ("I4", "Avg CMS\nPayment",     "C55A11"),
+        ("A5", "County",              DARK_GREY),
+        ("B5", "CMS Specialty",       DARK_GREY),
+        ("C5", "Plan Type",           DARK_GREY),
+        ("D5", "Contracted\nTotal",   MID_BLUE),
+        ("E5", "Aetna\nPar",          MID_BLUE),
+        ("F5", "CMS\nMedicare",       MID_BLUE),
+        ("G5", "Both",                MID_BLUE),
+        ("H5", "Aetna\nTotal Claims", "375623"),
+        ("I5", "Aetna\nTotal Allowed","375623"),
+        ("J5", "CMS\nBenes Served",   "C55A11"),
+        ("K5", "CMS\nAvg Payment",    "C55A11"),
     ]
-    ws.row_dimensions[4].height = 35
+    ws.row_dimensions[5].height = 35
     for ref, label, bg in headers:
         cell(ws, ref, label, bold=True, color=WHITE,
-             bg=bg, size=10, h_align="center", bdr=True)
+             bg=bg, size=9, h_align="center", bdr=True)
+
+    LIGHT_GREEN  = "E2EFDA"
+    LIGHT_ORANGE = "FCE4D6"
 
     prev_key = None
     alt = True
 
     for i, (_, row) in enumerate(df_par.iterrows()):
-        r = i + 5
-        key = (row.get('county_name', ''), row.get('cms_specialty', ''))
+        r = i + 6
+        key = (row.get("county_name", ""), row.get("cms_specialty", ""))
         if key != prev_key:
             alt = not alt
             prev_key = key
         row_bg = GREY if alt else WHITE
 
-        status = str(row.get('participation_status', ''))
-        txt_c, status_bg = STATUS_COLORS.get(status, (DARK_GREY, row_bg))
-
         data = [
-            ("A", row.get('county_name', ''),       DARK_GREY, row_bg),
-            ("B", row.get('cms_specialty', ''),      DARK_GREY, row_bg),
-            ("C", row.get('plan_type', ''),          DARK_GREY, row_bg),
-            ("D", status,                            txt_c,     status_bg),
-            ("E", _int(row.get('provider_count')),              MID_BLUE, LIGHT_BLUE),
-            ("F", _int(row.get('total_claims')),               MID_BLUE, LIGHT_BLUE),
-            ("G", _float(row.get('total_allowed_amt')),        MID_BLUE, LIGHT_BLUE),
-            ("H", _int(row.get('total_cms_benes')),            "C55A11", "FCE4D6"),
-            ("I", _float(row.get('avg_cms_payment')),          "C55A11", "FCE4D6"),
+            ("A", row.get("county_name", ""),             DARK_GREY,   row_bg),
+            ("B", row.get("cms_specialty", ""),           DARK_GREY,   row_bg),
+            ("C", row.get("plan_type", ""),               DARK_GREY,   row_bg),
+            ("D", _int(row.get("contracted_total")),      MID_BLUE,    LIGHT_BLUE),
+            ("E", _int(row.get("aetna_par")),             "375623",    LIGHT_GREEN),
+            ("F", _int(row.get("cms_medicare")),          "C55A11",    LIGHT_ORANGE),
+            ("G", _int(row.get("both_par")),              DARK_BLUE,   LIGHT_BLUE),
+            ("H", _int(row.get("aetna_total_claims")),    "375623",    LIGHT_GREEN),
+            ("I", _float(row.get("aetna_total_allowed")), "375623",    LIGHT_GREEN),
+            ("J", _int(row.get("cms_total_benes")),       "C55A11",    LIGHT_ORANGE),
+            ("K", _float(row.get("cms_avg_payment")),     "C55A11",    LIGHT_ORANGE),
         ]
         for col, val, txt_color, bg_color in data:
             c = ws[f"{col}{r}"]
             c.value = val
-            c.font = Font(name="Arial", color=txt_color, size=9,
-                          bold=(col == "D"))
+            c.font = Font(name="Arial", color=txt_color, size=9)
             c.fill = fill(bg_color)
-            c.alignment = Alignment(horizontal="center" if col not in ("A","B","D") else "left",
-                                    vertical="center")
+            c.alignment = Alignment(
+                horizontal="left" if col in ("A", "B") else "center",
+                vertical="center"
+            )
             c.border = thin_border()
-            if col in ("G", "I"):
+            if col in ("I", "K"):
                 c.number_format = "#,##0.00"
         ws.row_dimensions[r].height = 15
 
+    ws.auto_filter.ref = f"A5:K{len(df_par) + 5}"
     return ws
 
 
@@ -2137,90 +2228,119 @@ def build_tab_submarket_inventory(wb, df):
     return ws
 
 
-def build_tab_submarket_par(wb, df):
+def build_tab_submarket_par(wb, df_par):
     ws = wb.create_sheet("Submarket Par Flags")
     ws.sheet_view.showGridLines = False
-    ws.freeze_panes = "A5"
+    ws.freeze_panes = "A6"
 
     col_widths = {
-        "A": 3,  "B": 22, "C": 28, "D": 10, "E": 32,
-        "F": 16, "G": 18, "H": 18, "I": 18, "J": 18,
+        "A": 22, "B": 28, "C": 10, "D": 12,
+        "E": 16, "F": 14, "G": 14, "H": 12,
+        "I": 16, "J": 18, "K": 16, "L": 16,
     }
     for col, w in col_widths.items():
         ws.column_dimensions[col].width = w
 
-    ws.merge_cells("B1:J1")
-    cell(ws, "B1", "Medicare Supply Demand — Submarket Par Flags",
+    # title
+    ws.merge_cells("A1:L1")
+    cell(ws, "A1", "Medicare Supply Demand — Submarket Provider Participation Summary",
          bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
     ws.row_dimensions[1].height = 35
 
-    _disclaimer_row(ws, "B", "J")
+    # disclaimer
+    ws.merge_cells("A2:L2")
+    cell(ws, "A2",
+         "NOTE: Submarket is an Aetna internal business grouping — not a CMS compliance unit. "
+         "CMS evaluates compliance at county level per 42 CFR 422.116. "
+         "These figures are operational rollups for network management purposes only.",
+         size=8, color="7F0000", bg="FFF9E6", italic=True, h_align="left", wrap=True)
+    ws.row_dimensions[2].height = 24
 
-    for ref, txt in [
-        ("B3", ""), ("C3", ""), ("D3", ""), ("E3", ""),
-        ("F3", "SUM of provider_count per status"),
-        ("G3", "SUM of claim_count for active providers"),
-        ("H3", "SUM of Aetna allowed amounts 2024-2025"),
-        ("I3", "SUM of CMS Medicare beneficiaries served (2023 FFS)"),
-        ("J3", "AVG CMS payment per provider (active only)"),
-    ]:
-        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
-    ws.row_dimensions[3].height = 28
+    # subtitle
+    ws.merge_cells("A3:L3")
+    cell(ws, "A3",
+         "Grain: Submarket x CMS Specialty x Plan Type  |  "
+         "Aetna Par = provider had >=1 Aetna claim with allowed_amt > 0 (2024-2025)  |  "
+         "CMS Medicare = provider appears in CMS Medicare FFS 2023  |  "
+         "Both = provider meets both criteria",
+         size=9, color="666666", bg="F9F9F9", italic=True, h_align="left", wrap=True)
+    ws.row_dimensions[3].height = 22
 
-    for ref, label, bg in [
-        ("B4", "Submarket",            DARK_GREY),
-        ("C4", "CMS Specialty",        DARK_GREY),
-        ("D4", "Plan\nType",           DARK_GREY),
-        ("E4", "Participation Status", DARK_GREY),
-        ("F4", "Provider\nCount",      MID_BLUE),
-        ("G4", "Total\nClaims",        MID_BLUE),
-        ("H4", "Total Aetna\nAllowed", MID_BLUE),
-        ("I4", "CMS Benes\nServed",    "C55A11"),
-        ("J4", "Avg CMS\nPayment",     "C55A11"),
+    # color band labels row 4
+    for rng, text, bg in [
+        ("A4:D4", "  IDENTIFIERS",      DARK_GREY),
+        ("E4:H4", "  PROVIDER COUNTS",  MID_BLUE),
+        ("I4:J4", "  AETNA ACTIVITY",   "375623"),
+        ("K4:L4", "  CMS ACTIVITY",     "C55A11"),
     ]:
+        ws.merge_cells(rng)
+        cell(ws, rng.split(":")[0], text,
+             bold=True, color=WHITE, bg=bg, size=9, h_align="left")
+    ws.row_dimensions[4].height = 16
+
+    # headers row 5
+    headers = [
+        ("A5", "Submarket",           DARK_GREY),
+        ("B5", "CMS Specialty",       DARK_GREY),
+        ("C5", "Plan Type",           DARK_GREY),
+        ("D5", "County\nCount",       DARK_GREY),
+        ("E5", "Contracted\nTotal",   MID_BLUE),
+        ("F5", "Aetna\nPar",          MID_BLUE),
+        ("G5", "CMS\nMedicare",       MID_BLUE),
+        ("H5", "Both",                MID_BLUE),
+        ("I5", "Aetna\nTotal Claims", "375623"),
+        ("J5", "Aetna\nTotal Allowed","375623"),
+        ("K5", "CMS\nBenes Served",   "C55A11"),
+        ("L5", "CMS\nAvg Payment",    "C55A11"),
+    ]
+    ws.row_dimensions[5].height = 35
+    for ref, label, bg in headers:
         cell(ws, ref, label, bold=True, color=WHITE,
-             bg=bg, size=10, h_align="center", bdr=True)
-    ws.row_dimensions[4].height = 35
+             bg=bg, size=9, h_align="center", bdr=True)
+
+    LIGHT_GREEN  = "E2EFDA"
+    LIGHT_ORANGE = "FCE4D6"
 
     prev_key = None
     alt = True
 
-    for i, (_, row) in enumerate(df.iterrows()):
-        r = i + 5
-        key = (row.get('submarket', ''), row.get('cms_specialty', ''))
+    for i, (_, row) in enumerate(df_par.iterrows()):
+        r = i + 6
+        key = (row.get("submarket", ""), row.get("cms_specialty", ""))
         if key != prev_key:
             alt = not alt
             prev_key = key
-
-        status = str(row.get('participation_status', ''))
-        txt_c, status_bg = STATUS_COLORS.get(status, (DARK_GREY, GREY if alt else WHITE))
         row_bg = GREY if alt else WHITE
 
         data = [
-            ("B", row.get('submarket', ''),        DARK_GREY, row_bg),
-            ("C", row.get('cms_specialty', ''),    DARK_GREY, row_bg),
-            ("D", row.get('plan_type', ''),        DARK_GREY, row_bg),
-            ("E", status,                           txt_c,     status_bg),
-            ("F", _int(row.get('provider_count')), MID_BLUE,  LIGHT_BLUE),
-            ("G", _int(row.get('total_claims')),   MID_BLUE,  LIGHT_BLUE),
-            ("H", _float(row.get('total_allowed_amt')), MID_BLUE, LIGHT_BLUE),
-            ("I", _int(row.get('total_cms_benes')), "C55A11", "FCE4D6"),
-            ("J", _float(row.get('avg_cms_payment')), "C55A11", "FCE4D6"),
+            ("A", row.get("submarket", ""),               DARK_GREY,   row_bg),
+            ("B", row.get("cms_specialty", ""),           DARK_GREY,   row_bg),
+            ("C", row.get("plan_type", ""),               DARK_GREY,   row_bg),
+            ("D", _int(row.get("county_count")),          DARK_GREY,   row_bg),
+            ("E", _int(row.get("contracted_total")),      MID_BLUE,    LIGHT_BLUE),
+            ("F", _int(row.get("aetna_par")),             "375623",    LIGHT_GREEN),
+            ("G", _int(row.get("cms_medicare")),          "C55A11",    LIGHT_ORANGE),
+            ("H", _int(row.get("both_par")),              DARK_BLUE,   LIGHT_BLUE),
+            ("I", _int(row.get("aetna_total_claims")),    "375623",    LIGHT_GREEN),
+            ("J", _float(row.get("aetna_total_allowed")), "375623",    LIGHT_GREEN),
+            ("K", _int(row.get("cms_total_benes")),       "C55A11",    LIGHT_ORANGE),
+            ("L", _float(row.get("cms_avg_payment")),     "C55A11",    LIGHT_ORANGE),
         ]
         for col, val, txt_color, bg_color in data:
             c = ws[f"{col}{r}"]
             c.value = val
-            c.font = Font(name="Arial", color=txt_color, size=9,
-                          bold=(col == "E"))
+            c.font = Font(name="Arial", color=txt_color, size=9)
             c.fill = fill(bg_color)
             c.alignment = Alignment(
-                horizontal="left" if col in ("B", "C", "E") else "center",
-                vertical="center")
+                horizontal="left" if col in ("A", "B") else "center",
+                vertical="center"
+            )
             c.border = thin_border()
-            if col in ("H", "J"):
+            if col in ("J", "L"):
                 c.number_format = "#,##0.00"
         ws.row_dimensions[r].height = 15
 
+    ws.auto_filter.ref = f"A5:L{len(df_par) + 5}"
     return ws
 
 
