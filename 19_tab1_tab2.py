@@ -313,10 +313,109 @@ def build_tab1(wb):
     return ws
 
 
-# ── TAB 2: COMPLIANCE REPORT ──────────────────────────────────
+# ── TAB 2: COUNTY MAPPING ─────────────────────────────────────
+
+def build_tab_county_mapping(wb):
+    ws = wb.create_sheet("2. County Mapping")
+    ws.sheet_view.showGridLines = False
+
+    ws.column_dimensions["A"].width = 3
+    ws.column_dimensions["B"].width = 26
+    ws.column_dimensions["C"].width = 26
+    ws.column_dimensions["D"].width = 26
+
+    COUNTY_DATA = [
+        ("Alachua","Alachua","Alachua"),("Baker","Baker","Baker"),
+        (None,"Bay","Bay"),(None,"Bradford","Bradford"),
+        ("Brevard","Brevard","Brevard"),("Broward","Broward","Broward"),
+        (None,"Calhoun","Calhoun"),("Charlotte","Charlotte","Charlotte"),
+        ("Citrus","Citrus","Citrus"),("Clay","Clay","Clay"),
+        ("Collier","Collier","Collier"),("Columbia","Columbia","Columbia"),
+        ("Desoto","DeSoto","DeSoto"),
+        (None,"Dixie","Dixie"),("Duval","Duval","Duval"),
+        ("Escambia","Escambia","Escambia"),("Flagler","Flagler","Flagler"),
+        (None,"Franklin","Franklin"),(None,"Gadsden","Gadsden"),
+        (None,"Gilchrist","Gilchrist"),(None,"Glades","Glades"),
+        (None,"Gulf","Gulf"),(None,"Hamilton","Hamilton"),
+        (None,"Hardee","Hardee"),(None,"Hendry","Hendry"),
+        ("Hernando","Hernando","Hernando"),("Highlands","Highlands","Highlands"),
+        ("Hillsborough","Hillsborough","Hillsborough"),
+        (None,"Holmes","Holmes"),("Indian River","Indian River","Indian River"),
+        (None,"Jackson","Jackson"),(None,"Jefferson","Jefferson"),
+        (None,"Lafayette","Lafayette"),("Lake","Lake","Lake"),
+        ("Lee","Lee","Lee"),(None,"Leon","Leon"),
+        ("Levy","Levy","Levy"),(None,"Liberty","Liberty"),
+        (None,"Madison","Madison"),("Manatee","Manatee","Manatee"),
+        ("Marion","Marion","Marion"),("Martin","Martin","Martin"),
+        ("Miami-Dade","Miami-Dade","Miami-Dade"),(None,"Monroe","Monroe"),
+        ("Nassau","Nassau","Nassau"),("Okaloosa","Okaloosa","Okaloosa"),
+        (None,"Okeechobee","Okeechobee"),("Orange","Orange","Orange"),
+        ("Osceola","Osceola","Osceola"),("Palm Beach","Palm Beach","Palm Beach"),
+        ("Pasco","Pasco","Pasco"),("Pinellas","Pinellas","Pinellas"),
+        ("Polk","Polk","Polk"),("Putnam","Putnam","Putnam"),
+        ("Saint Johns","St. Johns","St. Johns"),
+        ("Saint Lucie","St. Lucie","St. Lucie"),
+        ("Santa Rosa","Santa Rosa","Santa Rosa"),("Sarasota","Sarasota","Sarasota"),
+        ("Seminole","Seminole","Seminole"),("Sumter","Sumter","Sumter"),
+        (None,"Suwannee","Suwannee"),(None,"Taylor","Taylor"),
+        (None,"Union","Union"),("Volusia","Volusia","Volusia"),
+        (None,"Wakulla","Wakulla"),("Walton","Walton","Walton"),
+        (None,"Washington","Washington"),
+    ]
+
+    ws.merge_cells("B1:D1")
+    cell(ws, "B1", "Florida Counties",
+         bold=True, color=WHITE, bg=DARK_BLUE, size=14, h_align="center")
+    ws.row_dimensions[1].height = 35
+
+    for ref, txt in [
+        ("B2", "ref_county_name_crosswalk  |  aetna_county_nm"),
+        ("C2", "ref_county_classification  |  county_name"),
+        ("D2", "ref_hsd_required_counts  |  county_name"),
+    ]:
+        cell(ws, ref, txt, size=8, color="666666", bg="F9F9F9", italic=True, wrap=True)
+    ws.row_dimensions[2].height = 22
+
+    for ref, label, bg in [
+        ("B3", "Aetna Tables", MID_BLUE),
+        ("C3", "Census",       MID_BLUE),
+        ("D3", "CMS HSD File", MID_BLUE),
+    ]:
+        cell(ws, ref, label, bold=True, color=WHITE,
+             bg=bg, size=10, h_align="center", bdr=True)
+    ws.row_dimensions[3].height = 24
+
+    for i, (aetna, census, cms) in enumerate(COUNTY_DATA):
+        r = i + 4
+        ws.row_dimensions[r].height = 15
+        row_bg = GREY if i % 2 == 0 else WHITE
+        mismatch = aetna is not None and aetna != census
+        no_coverage = aetna is None
+
+        cell(ws, f"B{r}",
+             aetna if aetna else "-",
+             size=9, italic=no_coverage,
+             color="C00000" if mismatch else ("999999" if no_coverage else "000000"),
+             bg="FFE0E0" if mismatch else row_bg,
+             bdr=True)
+
+        cell(ws, f"C{r}", census,
+             size=9,
+             color="C00000" if mismatch else "000000",
+             bg="FFE0E0" if mismatch else row_bg,
+             bdr=True)
+
+        cell(ws, f"D{r}", cms,
+             size=9, color="000000",
+             bg=row_bg, bdr=True)
+
+    return ws
+
+
+# ── TAB 3: COMPLIANCE REPORT ──────────────────────────────────
 
 def build_tab2(wb, df):
-    ws = wb.create_sheet("2. Compliance Report")
+    ws = wb.create_sheet("3. Compliance Report")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -539,7 +638,7 @@ ORDER BY pct_compliant ASC, cms_specialty, plan_type
 # ── TAB 3: SUMMARY BY PLAN × SPECIALTY ───────────────────────
 
 def build_tab3(wb, df_summary):
-    ws = wb.create_sheet("3. Summary by Specialty")
+    ws = wb.create_sheet("4. Summary by Specialty")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -658,7 +757,7 @@ def build_tab3(wb, df_summary):
 # ── TAB 4: SUMMARY BY PLAN × COUNTY ──────────────────────────
 
 def build_tab4(wb, df_county):
-    ws = wb.create_sheet("4. Summary by County")
+    ws = wb.create_sheet("5. Summary by County")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -766,7 +865,7 @@ def build_tab4(wb, df_county):
 # ── TAB 5: DATA DICTIONARY ────────────────────────────────────
 
 def build_tab5(wb):
-    ws = wb.create_sheet("5. Data Dictionary")
+    ws = wb.create_sheet("6. Data Dictionary")
     ws.sheet_view.showGridLines = False
 
     ws.column_dimensions["A"].width = 3
@@ -836,7 +935,7 @@ def build_tab5(wb):
 # ── TAB 6: CMS RULES ─────────────────────────────────────────
 
 def build_tab6(wb):
-    ws = wb.create_sheet("6. CMS Rules")
+    ws = wb.create_sheet("7. CMS Rules")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A4"
 
@@ -953,7 +1052,7 @@ def build_tab6(wb):
 # ── TAB 7: MEDICARE DATA SOURCING ─────────────────────────────
 
 def build_tab_data_sourcing(wb):
-    ws = wb.create_sheet("7. Medicare Data Sourcing")
+    ws = wb.create_sheet("8. Medicare Data Sourcing")
     ws.sheet_view.showGridLines = False
 
     ws.column_dimensions["A"].width = 3
@@ -1254,7 +1353,7 @@ ORDER BY county_name, cms_specialty, plan_type, participation_status
 # ── TAB 7: WEEK 3 DELIVERABLE 1 — DATA INVENTORY ─────────────
 
 def build_tab7(wb, df_inventory):
-    ws = wb.create_sheet("8. W3 Data Inventory")
+    ws = wb.create_sheet("9. W3 Data Inventory")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -1348,7 +1447,7 @@ STATUS_COLORS = {
 }
 
 def build_tab8(wb, df_par):
-    ws = wb.create_sheet("9. W3 Par Flags")
+    ws = wb.create_sheet("10. W3 Par Flags")
     ws.sheet_view.showGridLines = False
     ws.freeze_panes = "A5"
 
@@ -1465,7 +1564,10 @@ if __name__ == "__main__":
     print("Building Tab 1...")
     build_tab1(wb)
 
-    print("Building Tab 2...")
+    print("Building Tab 2 (County Mapping)...")
+    build_tab_county_mapping(wb)
+
+    print("Building Tab 3...")
     build_tab2(wb, df)
 
     print("Building Tab 3...")
