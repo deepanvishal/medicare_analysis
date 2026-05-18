@@ -360,103 +360,92 @@ SELECT * FROM UNNEST([
   STRUCT('Cardiothoracic Surgery' AS cms_specialty, '2CS' AS aetna_code, 'Cardiothoracic/Cardiovascular' AS aetna_description),
   STRUCT('Cardiothoracic Surgery' AS cms_specialty, '2TS' AS aetna_code, 'Thoracic Surgery' AS aetna_description),
   STRUCT('Cardiothoracic Surgery' AS cms_specialty, '10426' AS aetna_code, 'Pediatric Thoracic Surgery' AS aetna_description),
-  STRUCT('Acute Inpatient Hospitals' AS cms_specialty, '2OT' AS aetna_code, 'Hospital Outpatient' AS aetna_description),
-  STRUCT('Acute Inpatient Hospitals' AS cms_specialty, 'CH' AS aetna_code, 'Children\'s Hospital' AS aetna_description),
+  -- 040 Acute Inpatient Hospitals
   STRUCT('Acute Inpatient Hospitals' AS cms_specialty, 'HO' AS aetna_code, 'Acute Short Term Hospital' AS aetna_description),
-  STRUCT('Acute Inpatient Hospitals' AS cms_specialty, 'HSLT' AS aetna_code, 'Hospitalist' AS aetna_description),
-  STRUCT('Acute Inpatient Hospitals' AS cms_specialty, 'LHO' AS aetna_code, 'Long Term Acute Care Hospital' AS aetna_description),
-  STRUCT('Acute Inpatient Hospitals' AS cms_specialty, '2HSLT' AS aetna_code, 'Hospitalist' AS aetna_description),
-  STRUCT('Acute Inpatient Hospitals' AS cms_specialty, '2SH' AS aetna_code, 'Specialty Hospital' AS aetna_description),
-  STRUCT('Acute Inpatient Hospitals' AS cms_specialty, '91002' AS aetna_code, 'Hospitalist' AS aetna_description),
-  STRUCT('Cardiac Surgery Program' AS cms_specialty, '91046' AS aetna_code, 'Cardiac Valve Replacement' AS aetna_description),
-  STRUCT('Cardiac Surgery Program' AS cms_specialty, '91205' AS aetna_code, 'Cardiac Monitoring Service' AS aetna_description),
+
+  -- 041 Cardiac Surgery Program
   STRUCT('Cardiac Surgery Program' AS cms_specialty, '91206' AS aetna_code, 'Cardiac Surgery Program' AS aetna_description),
-  STRUCT('Cardiac Surgery Program' AS cms_specialty, '2CS' AS aetna_code, 'Cardiothoracic/Cardiovascular' AS aetna_description),
-  STRUCT('Cardiac Catheterization' AS cms_specialty, '10302' AS aetna_code, 'Cardiac Electrophysiology' AS aetna_description),
-  STRUCT('Cardiac Catheterization' AS cms_specialty, '91205' AS aetna_code, 'Cardiac Monitoring Service' AS aetna_description),
-  STRUCT('Cardiac Catheterization' AS cms_specialty, '2CEP' AS aetna_code, 'Cardiac Electrophysiology' AS aetna_description),
-  STRUCT('Cardiac Catheterization' AS cms_specialty, '10332' AS aetna_code, 'Interventional Cardiology' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '10304' AS aetna_code, 'Critical Care Medicine' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '10432' AS aetna_code, 'Pediatric Intensive Care' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '20102' AS aetna_code, 'Critical Care Medicine/Obstetr' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '30102' AS aetna_code, 'Critical Care Medicine/Anesthe' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '30302' AS aetna_code, 'Critical Care Medicine Neurolo' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '30803' AS aetna_code, 'Surgery Critical care' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '91125' AS aetna_code, 'Trauma Surgical Critical Care' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '91165' AS aetna_code, 'Intensive Care Coordination' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '2CCM' AS aetna_code, 'Critical Care Medicine' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '2CCMP' AS aetna_code, 'Critical Care Medicine (Pediat' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '10404' AS aetna_code, 'Pediatric Critical Care' AS aetna_description),
-  STRUCT('Critical Care ICU' AS cms_specialty, '11016' AS aetna_code, 'Neurocritical Care' AS aetna_description),
-  STRUCT('Surgical Services ASC' AS cms_specialty, '91235' AS aetna_code, 'Outpatient Surgery' AS aetna_description),
+
+  -- 042 Cardiac Catheterization — REMOVED
+  -- No valid Aetna facility code. All previously mapped codes were
+  -- individual cardiologist specialty codes, not cath lab facilities.
+
+  -- 043 Critical Care ICU — REMOVED
+  -- No valid Aetna facility code. All previously mapped codes were
+  -- individual physician specialty codes, not ICU facilities.
+
+  -- 044 Outpatient Dialysis — ATTEST ONLY
+  -- Organizations attest to adequate access per CMS 2018 guidance.
+  -- No facility records submitted. Removed from crosswalk.
+
+  -- 045 Surgical Services ASC
   STRUCT('Surgical Services ASC' AS cms_specialty, 'AC' AS aetna_code, 'Ambulatory Surgicenter' AS aetna_description),
-  STRUCT('Surgical Services ASC' AS cms_specialty, 'FEC' AS aetna_code, 'Freestanding Emergency Center' AS aetna_description),
+  STRUCT('Surgical Services ASC' AS cms_specialty, '91235' AS aetna_code, 'Outpatient Surgery' AS aetna_description),
   STRUCT('Surgical Services ASC' AS cms_specialty, '2FS' AS aetna_code, 'Free Standing Surgical Unit' AS aetna_description),
-  STRUCT('Skilled Nursing Facility' AS cms_specialty, '91287' AS aetna_code, 'Assisted Living Center' AS aetna_description),
-  STRUCT('Skilled Nursing Facility' AS cms_specialty, '91294' AS aetna_code, 'Skilled Nursing Facilities' AS aetna_description),
-  STRUCT('Skilled Nursing Facility' AS cms_specialty, '91301' AS aetna_code, 'Nursing Facility Transition Di' AS aetna_description),
-  STRUCT('Skilled Nursing Facility' AS cms_specialty, '91302' AS aetna_code, 'Recuperative Care' AS aetna_description),
-  STRUCT('Skilled Nursing Facility' AS cms_specialty, 'ALC' AS aetna_code, 'Assisted Living Center' AS aetna_description),
-  STRUCT('Skilled Nursing Facility' AS cms_specialty, 'LSS' AS aetna_code, 'Long-Term Services and Support' AS aetna_description),
+
+  -- 046 Skilled Nursing Facility
   STRUCT('Skilled Nursing Facility' AS cms_specialty, 'SK' AS aetna_code, 'Skilled Nursing Facility' AS aetna_description),
   STRUCT('Skilled Nursing Facility' AS cms_specialty, '2SNF' AS aetna_code, 'Skilled Nursing Facility' AS aetna_description),
+  STRUCT('Skilled Nursing Facility' AS cms_specialty, '91294' AS aetna_code, 'Skilled Nursing Facilities' AS aetna_description),
+
+  -- 047 Diagnostic Radiology
   STRUCT('Diagnostic Radiology' AS cms_specialty, '40306' AS aetna_code, 'Diagnostic Roentgenology' AS aetna_description),
   STRUCT('Diagnostic Radiology' AS cms_specialty, '40311' AS aetna_code, 'Neuroradiology' AS aetna_description),
   STRUCT('Diagnostic Radiology' AS cms_specialty, '40313' AS aetna_code, 'Nuclear Imaging and Therapy' AS aetna_description),
   STRUCT('Diagnostic Radiology' AS cms_specialty, '40315' AS aetna_code, 'Diagnostic Ultrasound' AS aetna_description),
   STRUCT('Diagnostic Radiology' AS cms_specialty, '40320' AS aetna_code, 'Body Imaging' AS aetna_description),
   STRUCT('Diagnostic Radiology' AS cms_specialty, '91224' AS aetna_code, 'Medical Imaging' AS aetna_description),
-  STRUCT('Diagnostic Radiology' AS cms_specialty, 'RFA' AS aetna_code, 'Radiology Center' AS aetna_description),
+  STRUCT('Diagnostic Radiology' AS cms_specialty, 'RC' AS aetna_code, 'Radiology Center' AS aetna_description),
+  STRUCT('Diagnostic Radiology' AS cms_specialty, '2R' AS aetna_code, 'Radiology' AS aetna_description),
+  STRUCT('Diagnostic Radiology' AS cms_specialty, '91156' AS aetna_code, 'MRI' AS aetna_description),
+  STRUCT('Diagnostic Radiology' AS cms_specialty, '2MRI' AS aetna_code, 'Magnetic Resonance Imaging' AS aetna_description),
+
+  -- 048 Mammography
   STRUCT('Mammography' AS cms_specialty, '91223' AS aetna_code, 'Mammography' AS aetna_description),
-  STRUCT('Physical Therapy' AS cms_specialty, '90331' AS aetna_code, 'Hand Rehabilitation' AS aetna_description),
-  STRUCT('Physical Therapy' AS cms_specialty, '90375' AS aetna_code, 'Physical Therapy (Pediatric)' AS aetna_description),
+
+  -- 049 Physical Therapy
   STRUCT('Physical Therapy' AS cms_specialty, '91141' AS aetna_code, 'Physical Therapy' AS aetna_description),
-  STRUCT('Physical Therapy' AS cms_specialty, '2HR' AS aetna_code, 'Hand Rehabilitation' AS aetna_description),
   STRUCT('Physical Therapy' AS cms_specialty, '2PT' AS aetna_code, 'Physical Therapy' AS aetna_description),
-  STRUCT('Occupational Therapy' AS cms_specialty, '90374' AS aetna_code, 'Occupational Therapy (Pediatri' AS aetna_description),
+  STRUCT('Physical Therapy' AS cms_specialty, '2HR' AS aetna_code, 'Hand Rehabilitation' AS aetna_description),
+  STRUCT('Physical Therapy' AS cms_specialty, '90331' AS aetna_code, 'Hand Rehabilitation' AS aetna_description),
+
+  -- 050 Occupational Therapy
   STRUCT('Occupational Therapy' AS cms_specialty, '91142' AS aetna_code, 'Occupational Therapy' AS aetna_description),
   STRUCT('Occupational Therapy' AS cms_specialty, '2TO' AS aetna_code, 'Occupational Therapy' AS aetna_description),
-  STRUCT('Speech Therapy' AS cms_specialty, '90373' AS aetna_code, 'Speech Therapy (Pediatric)' AS aetna_description),
+
+  -- 051 Speech Therapy
   STRUCT('Speech Therapy' AS cms_specialty, '91143' AS aetna_code, 'Speech Therapy' AS aetna_description),
-  STRUCT('Speech Therapy' AS cms_specialty, '91257' AS aetna_code, 'Speech/Hearing' AS aetna_description),
-  STRUCT('Speech Therapy' AS cms_specialty, '91258' AS aetna_code, 'Speech/Hearing Therapy' AS aetna_description),
-  STRUCT('Speech Therapy' AS cms_specialty, '91259' AS aetna_code, 'Speech/Language/Hearing Therap' AS aetna_description),
+  STRUCT('Speech Therapy' AS cms_specialty, '2TT' AS aetna_code, 'Speech Therapy' AS aetna_description),
   STRUCT('Speech Therapy' AS cms_specialty, 'SH' AS aetna_code, 'Speech Pathologist' AS aetna_description),
   STRUCT('Speech Therapy' AS cms_specialty, 'ST' AS aetna_code, 'Speech Therapist' AS aetna_description),
-  STRUCT('Speech Therapy' AS cms_specialty, '2TT' AS aetna_code, 'Speech Therapy' AS aetna_description),
+
+  -- 052 Inpatient Psychiatric Facility
   STRUCT('Inpatient Psychiatric' AS cms_specialty, 'RTF' AS aetna_code, 'Residential Treatment Facility' AS aetna_description),
-  STRUCT('Inpatient Psychiatric' AS cms_specialty, '2PLMD' AS aetna_code, 'Palliative Medicine' AS aetna_description),
-  STRUCT('Inpatient Psychiatric' AS cms_specialty, '91001' AS aetna_code, 'Palliative Medicine' AS aetna_description),
-  STRUCT('Inpatient Psychiatric' AS cms_specialty, '91003' AS aetna_code, 'Psychotic Disorders' AS aetna_description),
-  STRUCT('Outpatient Infusion/Chemo' AS cms_specialty, '91180' AS aetna_code, 'Antibiotic Infusion' AS aetna_description),
-  STRUCT('Outpatient Infusion/Chemo' AS cms_specialty, '91218' AS aetna_code, 'Home Infusion Therapy for HIV' AS aetna_description),
-  STRUCT('Outpatient Infusion/Chemo' AS cms_specialty, '91234' AS aetna_code, 'Outpatient Infusion/Chemothera' AS aetna_description),
-  STRUCT('Outpatient Infusion/Chemo' AS cms_specialty, 'HI' AS aetna_code, 'Home Infusion' AS aetna_description),
+
+  -- 057 Outpatient Infusion/Chemo
+  STRUCT('Outpatient Infusion/Chemo' AS cms_specialty, '91234' AS aetna_code, 'Outpatient Infusion/Chemotherapy' AS aetna_description),
   STRUCT('Outpatient Infusion/Chemo' AS cms_specialty, 'IC' AS aetna_code, 'Infusion Center' AS aetna_description),
   STRUCT('Outpatient Infusion/Chemo' AS cms_specialty, '2IC' AS aetna_code, 'Infusion Center' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '10204' AS aetna_code, 'Addiction Medicine' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '90001' AS aetna_code, 'Addictions Counselor' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91032' AS aetna_code, 'Applied Behavioral Analysis' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91134' AS aetna_code, 'Behavioral Health Rehabilitati' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91174' AS aetna_code, 'Mobile Crisis Intervention (MC' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91175' AS aetna_code, 'Behavioral Health Services Tel' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91278' AS aetna_code, 'Applied Behavioral Analysis (A' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '2AC' AS aetna_code, 'Addictions Counselor' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '2MH' AS aetna_code, 'Mental Health-Substance Abuse' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, 'ABA' AS aetna_code, 'Applied Behavioral Analysis' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, 'BHR' AS aetna_code, 'Behavioral Health Rehabilitati' AS aetna_description),
+
+  -- 058 Outpatient Behavioral Health (new CY2025)
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, 'SA' AS aetna_code, 'Substance Abuse Facility' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, 'BHR' AS aetna_code, 'Behavioral Health Rehabilitation Services' AS aetna_description),
   STRUCT('Outpatient Behavioral Health' AS cms_specialty, 'CAC' AS aetna_code, 'Certified Addictions Counselor' AS aetna_description),
   STRUCT('Outpatient Behavioral Health' AS cms_specialty, 'CMC' AS aetna_code, 'Community Mental Health Center' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, 'MH' AS aetna_code, 'Mental Health - Substance Abus' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, 'SA' AS aetna_code, 'Substance Abuse Facility' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '11007' AS aetna_code, 'Addictionology' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '11011' AS aetna_code, 'Addiction Psychiatry' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '90428' AS aetna_code, 'Mental Health' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91005' AS aetna_code, 'Dialectic Behavioral Therapy' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91006' AS aetna_code, 'Cognitive Behavioral Therapy' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91011' AS aetna_code, 'Substance Abuse Professional' AS aetna_description),
-  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91012' AS aetna_code, 'Crisis Intervention' AS aetna_description)
-]);-- ============================================================
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, 'MH' AS aetna_code, 'Mental Health - Substance Abuse' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '2MH' AS aetna_code, 'Mental Health-Substance Abuse' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '2AC' AS aetna_code, 'Addictions Counselor' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '90001' AS aetna_code, 'Addictions Counselor' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91134' AS aetna_code, 'Behavioral Health Rehabilitative Services' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91159' AS aetna_code, 'Medication Assisted Treatment' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91201' AS aetna_code, 'Alcohol/Chemical Dependency' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91242' AS aetna_code, 'Professional Counselor' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91028' AS aetna_code, 'Marriage and Family Therapy' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91033' AS aetna_code, 'Suboxone Certified - Medicine' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '91034' AS aetna_code, 'Suboxone Certified - Behavioral Health' AS aetna_description),
+  STRUCT('Outpatient Behavioral Health' AS cms_specialty, '90428' AS aetna_code, 'Mental Health' AS aetna_description)
+]);
+-- ============================================================
 -- MEDICARE NETWORK ADEQUACY & CAPACITY MODELING
 -- MASTER SQL FILE - ALL STEPS IN EXECUTION ORDER
 --
@@ -1319,7 +1308,11 @@ SELECT
   z.county_type,
   s.plan_type,
   s.market,
-  s.submarket
+  s.submarket,
+  CASE
+      WHEN STARTS_WITH(COALESCE(s.specialty_ctg_cd, ''), 'W') THEN 'FACILITY'
+      ELSE 'PROVIDER'
+  END AS record_type
 FROM specialty_mapped s
 LEFT JOIN `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_ref_specialty_crosswalk_expanded` sc
   ON TRIM(CAST(s.specialty_cd AS STRING)) = TRIM(CAST(sc.aetna_code AS STRING))
