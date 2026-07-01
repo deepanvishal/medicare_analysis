@@ -39,7 +39,11 @@ WITH zip_provider_pairs AS (
     t.max_distance_miles
   FROM `{BENE}` b
   JOIN `{ZIP}` bene_zip ON b.zip_code = bene_zip.zip_code
-  JOIN `{PROV}` p ON TRUE
+  JOIN `{PROV}` p
+    ON ST_DWITHIN(
+         ST_GEOGPOINT(bene_zip.zip_long, bene_zip.zip_lat),
+         ST_GEOGPOINT(p.zip_long,        p.zip_lat),
+         800 * 1609.34)                                                -- spatial prune > 800 mi (> the ~505 mi max CMS threshold)
   JOIN `{TD}` t
     ON t.cms_specialty = p.cms_specialty
     AND t.state_cd     = b.state_cd
