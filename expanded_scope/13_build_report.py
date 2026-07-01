@@ -197,9 +197,14 @@ def load():
         FROM `{PAR}` GROUP BY state_cd, county_name, cms_specialty, plan_type
         ORDER BY state_cd, county_name, cms_specialty, plan_type""").to_dataframe()
 
-    # submarket crosswalk: county (fips->HSD name) -> submarket, joined by state_cd+county_name
-    SM = (f"SELECT DISTINCT rc.state_cd, rc.county_name, p.submarket "
-          f"FROM `{PROV}` p JOIN `{CTY}` rc ON p.county_fips = rc.county_fips WHERE p.submarket IS NOT NULL")
+    # submarket crosswalk: each county -> its ONE dominant submarket (most local providers),
+    # scoped by state. This prevents a provider whose practice spans states from leaking their
+    # submarket into another state's counties, and gives exactly one submarket per county (no fan-out).
+    SM = (f"SELECT rc.state_cd, rc.county_name, p.submarket "
+          f"FROM `{PROV}` p JOIN `{CTY}` rc ON p.county_fips = rc.county_fips "
+          f"WHERE p.submarket IS NOT NULL "
+          f"GROUP BY rc.state_cd, rc.county_name, p.submarket "
+          f"QUALIFY ROW_NUMBER() OVER (PARTITION BY rc.state_cd, rc.county_name ORDER BY COUNT(*) DESC) = 1")
     d["sub_compliance"] = c.query(f"""
         SELECT sm.state_cd, sm.submarket, f.county_type, f.cms_specialty, f.plan_type,
           SUM(COALESCE(f.county_total_beneficiaries,0)) AS county_total_beneficiaries,
