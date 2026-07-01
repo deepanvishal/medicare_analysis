@@ -38,7 +38,7 @@ WHERE m.state IN {ABBR}
 
 CHECKS = {
     "rows + providers per state (expect all 4 present)":
-        f"SELECT state, COUNT(*) AS rows, COUNT(DISTINCT prvdr_id_no) AS providers "
+        f"SELECT state, COUNT(*) AS row_count, COUNT(DISTINCT prvdr_id_no) AS providers "
         f"FROM `{OUT}` GROUP BY state ORDER BY state",
 }
 

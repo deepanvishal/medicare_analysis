@@ -54,11 +54,11 @@ CHECKS = {
     # Confirms OH/AZ/IL row/provider counts before we relax the FL filter in Step5.
     "mbr_with_zip_states": f"""
         SELECT state,
-               COUNT(*)                    AS rows,
+               COUNT(*)                    AS row_count,
                COUNT(DISTINCT prvdr_id_no) AS providers
         FROM `{cfg.base('mbr_with_zip')}`
         GROUP BY state
-        ORDER BY rows DESC
+        ORDER BY row_count DESC
     """,
 }
 
@@ -69,10 +69,10 @@ def main():
     for label, sql in CHECKS.items():
         print(f"\n=== {label} ===")
         try:
-            rows = list(client.query(sql).result())
-            if not rows:
+            result_rows = list(client.query(sql).result())
+            if not result_rows:
                 print("  (no rows)")
-            for row in rows:
+            for row in result_rows:
                 print("  ", dict(row))
         except Exception as e:
             print("  ERROR:", e)

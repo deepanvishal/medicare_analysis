@@ -23,6 +23,21 @@ def repo_path(*parts):
     return os.path.join(_REPO_ROOT, *parts)
 
 
+# Input data files (xlsx / csv) live here. Loaders resolve by glob pattern so the
+# exact filename/suffix doesn't matter.
+DATA_DIR = "Expanded_scope_medicare"
+
+
+def data_file(pattern):
+    """The single input file in DATA_DIR matching a glob pattern (fails if 0 or >1)."""
+    import glob
+    matches = sorted(glob.glob(repo_path(DATA_DIR, pattern)))
+    if len(matches) != 1:
+        raise FileNotFoundError(
+            f"expected exactly 1 file matching {DATA_DIR}/{pattern}, found {len(matches)}: {matches}")
+    return matches[0]
+
+
 # --- projects / dataset (per CLAUDE.md) ---
 TABLE_PROJECT  = "anbc-hcb-dev"          # where tables live
 CLIENT_PROJECT = "anbc-dev-prv-nc-ds"    # billing/auth project for bigquery.Client

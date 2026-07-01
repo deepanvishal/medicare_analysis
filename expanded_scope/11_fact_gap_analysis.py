@@ -127,7 +127,7 @@ LEFT JOIN hospital_beds b
 
 CHECKS = {
     "compliance mix per state x plan":
-        f"SELECT state_cd, plan_type, compliance_status, COUNT(*) AS rows FROM `{OUT}` "
+        f"SELECT state_cd, plan_type, compliance_status, COUNT(*) AS row_count FROM `{OUT}` "
         f"GROUP BY state_cd, plan_type, compliance_status ORDER BY state_cd, plan_type, compliance_status",
     "RISK: Acute Inpatient beds per state (0 => hosp_list_cmi lacks that state)":
         f"SELECT state_cd, SUM(COALESCE(total_contracted_beds, 0)) AS acute_beds FROM `{OUT}` "

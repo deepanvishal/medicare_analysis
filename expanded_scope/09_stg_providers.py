@@ -144,7 +144,7 @@ GROUP BY ALL
 
 CHECKS = {
     "provider rows per state":
-        f"SELECT LEFT(county_fips, 2) AS state_fips, COUNT(*) AS rows, "
+        f"SELECT LEFT(county_fips, 2) AS state_fips, COUNT(*) AS row_count, "
         f"COUNT(DISTINCT provider_id) AS providers, COUNT(DISTINCT cms_specialty) AS specialties "
         f"FROM `{OUT}` GROUP BY 1 ORDER BY 1",
     "QA: provider rows where zip-county != Aetna-reported county":

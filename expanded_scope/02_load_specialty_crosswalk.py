@@ -15,7 +15,7 @@ NOTE   : All columns STRING. Explicit schema, WRITE_TRUNCATE. 09_stg_providers j
 import pandas as pd
 import config as cfg
 
-CSV_PATH = cfg.repo_path("cms_to_aetna_final (2).csv")
+CSV_PATH = cfg.data_file("cms_to_aetna*.csv")
 COLS = ["cms_specialty", "aetna_code", "aetna_description"]
 
 

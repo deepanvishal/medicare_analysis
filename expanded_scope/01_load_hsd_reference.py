@@ -22,7 +22,7 @@ NOTE   : 29 provider + 14 facility columns -> 43 cms_specialty (the 6 Primary-Ca
 import pandas as pd
 import config as cfg
 
-XLSX_PATH = cfg.repo_path("data", "ma_reference_file_12-17-2025.xlsx")
+XLSX_PATH = cfg.data_file("ma_reference_file*.xlsx")
 
 # id columns:  normalized HSD header -> target column
 ID_COLS = {
@@ -135,11 +135,11 @@ def validate(df):
     g = df.groupby("state_cd").agg(
         counties=("county_name", "nunique"),
         specialties=("cms_specialty", "nunique"),
-        rows=("required_count", "size"),
+        row_count=("required_count", "size"),
     )
     print(g.to_string())
     assert df["cms_specialty"].isna().sum() == 0, "unmapped specialty headers present"
-    fl_rows = int(g.loc["FL", "rows"]) if "FL" in g.index else 0
+    fl_rows = int(g.loc["FL", "row_count"]) if "FL" in g.index else 0
     assert fl_rows == 2881, f"FL expected 2,881 rows, got {fl_rows}"
     assert n_spec == 43, f"expected 43 specialties, got {n_spec}"
     print("VALIDATION OK")

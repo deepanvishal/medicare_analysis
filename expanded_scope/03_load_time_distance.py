@@ -23,8 +23,8 @@ NOTE   : Downstream (10_fact_zip_access / 11_fact_gap_analysis) must join on the
 import pandas as pd
 import config as cfg
 
-XLSX_PATH = cfg.repo_path("data", "ma_reference_file_12-17-2025.xlsx")
-MIN_RATIO_CSV = cfg.repo_path("data", "min_ratio_per_1000.csv")
+XLSX_PATH = cfg.data_file("ma_reference_file*.xlsx")
+MIN_RATIO_CSV = cfg.data_file("min_ratio_per_1000*.csv")
 COUNTY_TYPES = {"Large Metro", "Metro", "Micro", "Rural", "CEAC"}
 
 # HSD Time&Distance header (normalized) -> cms_specialty (29 provider + 14 facility).
@@ -113,7 +113,7 @@ def validate(df):
     ct = set(df["county_type"].unique())
     print(f"rows={len(df)}  specialties={n_spec}  county_types={sorted(ct)}")
     g = df.groupby("state_cd").agg(counties=("county_name", "nunique"),
-                                   rows=("cms_specialty", "size"))
+                                   row_count=("cms_specialty", "size"))
     print(g.to_string())
     gaps = int(df["max_distance_miles"].isna().sum())
     print(f"rows missing max_distance (data gaps): {gaps}")
