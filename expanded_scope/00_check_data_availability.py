@@ -56,7 +56,7 @@ CHECKS = {
         SELECT state,
                COUNT(*)                    AS rows,
                COUNT(DISTINCT prvdr_id_no) AS providers
-        FROM `{cfg.src('mbr_with_zip')}`
+        FROM `{cfg.base('mbr_with_zip')}`
         GROUP BY state
         ORDER BY rows DESC
     """,
