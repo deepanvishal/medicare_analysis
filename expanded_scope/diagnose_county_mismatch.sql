@@ -118,3 +118,22 @@ FROM (
     ON p.county_fips = rc.county_fips
   GROUP BY p.provider_id
 );
+
+
+WITH sm AS (
+  SELECT rc.state_cd, rc.county_name, p.submarket
+  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_ms_stg_providers_multi_specialty` p
+  JOIN `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_supply_demand_ms_ref_county` rc
+    ON p.county_fips = rc.county_fips
+  WHERE p.submarket IS NOT NULL
+  GROUP BY rc.state_cd, rc.county_name, p.submarket
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY rc.state_cd, rc.county_name ORDER BY COUNT(*) DESC) = 1
+)
+SELECT
+  state_cd,
+  submarket,
+  COUNT(DISTINCT county_name)                              AS counties,
+  STRING_AGG(DISTINCT county_name, ', ' ORDER BY county_name) AS county_list
+FROM sm
+GROUP BY state_cd, submarket
+ORDER BY state_cd, submarket;
