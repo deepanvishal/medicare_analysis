@@ -29,15 +29,15 @@ by a `state` column).
 | `01_load_hsd_reference.py` | **py** · Load HSD wide sheets (all states) + build `ms_ref_hsd_required_counts` data-driven (replaces hardcoded UNNEST). |
 | `02_load_specialty_crosswalk.py` | **py** · Aetna `specialty_cd` → 43 CMS specialties (from CSV). State-agnostic. |
 | `03_load_time_distance.py` | **py** · CMS time/distance + `min_ratio_per_1000` per specialty × county_type (from HSD T&D sheets). |
-| `04_ref_county_classification.sql` | **sql** · County → county_type + compliance_threshold, scope-state FIPS. |
-| `05_ref_zip_reference.sql` | **sql** · Zip centroid + zip→county spatial intersection (+ border zips). |
-| `06_ref_county_name_crosswalk.sql` | **sql** · Aetna county name → `county_fips`, keyed on `state_cd`+name (collision-safe). |
-| `07_mbr_with_all_zips.sql` | **sql** · Supply source: `mbr_with_zip` + provider zips, filter opened to 4 states. |
-| `08_stg_beneficiaries.sql` | **sql** · Demand side: zip population + Medicare eligibles + county attrs. |
-| `09_stg_providers.sql` | **sql** · Supply side: provider × cms_specialty × plan_type, `state_cd`/FIPS. |
-| `10_fact_zip_access.sql` | **sql** · Distance matrix: `has_access` per bene_zip × specialty × plan. |
-| `11_fact_gap_analysis.sql` | **sql** · County compliance: Test 1 + Test 2, FIPS-keyed. **The report reads this.** |
-| `12_provider_par_flag.sql` | **sql** · Participation flags (Aetna claims + CMS Original Medicare). |
+| `04_ref_county.py` | **py** · County dimension: `county_fips` + `county_type` (from HSD) + `compliance_threshold`. Replaces FL's Census classification. |
+| `05_ref_zip_reference.py` | **py** · Zip centroid + zip→county spatial intersection (+ border zips). |
+| ~~`06_ref_county_name_crosswalk`~~ | **DROPPED** · provider `county_fips` derived from the provider's zip in `09` (no name→FIPS crosswalk needed). |
+| `07_mbr_with_all_zips.py` | **py** · Supply source: `mbr_with_zip` + provider zips, filter opened to 4 states. |
+| `08_stg_beneficiaries.py` | **py** · Demand side: zip population + Medicare eligibles + county attrs (from `ms_ref_county`). |
+| `09_stg_providers.py` | **py** · Supply side: provider × cms_specialty × plan_type. `county_fips` from zip; keeps `aetna_county_nm` + QA. |
+| `10_fact_zip_access.py` | **py** · Distance matrix: `has_access` per bene_zip × specialty × plan. Per-county T&D join. |
+| `11_fact_gap_analysis.py` | **py** · County compliance: Test 1 + Test 2, `(state_cd,county_name)`-keyed. **The report reads this.** |
+| `12_provider_par_flag.py` | **py** · Participation flags (Aetna claims + CMS Original Medicare). *(DEFERRED — supplementary, not core report.)* |
 | `13_build_report.py` | **py** · One workbook, `State` filter column + per-state rollup. |
 
 ## Key design decisions

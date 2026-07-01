@@ -1,0 +1,216 @@
+cms_specialty,county_type,min_ratio_per_1000
+Primary Care,Large Metro,1.67
+Primary Care,Metro,1.67
+Primary Care,Micro,1.42
+Primary Care,Rural,1.42
+Primary Care,CEAC,1.42
+Allergy and Immunology,Large Metro,0.05
+Allergy and Immunology,Metro,0.05
+Allergy and Immunology,Micro,0.04
+Allergy and Immunology,Rural,0.04
+Allergy and Immunology,CEAC,0.04
+Cardiology,Large Metro,0.27
+Cardiology,Metro,0.27
+Cardiology,Micro,0.23
+Cardiology,Rural,0.23
+Cardiology,CEAC,0.23
+Chiropractor,Large Metro,0.1
+Chiropractor,Metro,0.1
+Chiropractor,Micro,0.09
+Chiropractor,Rural,0.09
+Chiropractor,CEAC,0.09
+Clinical Psychology,Large Metro,0.15
+Clinical Psychology,Metro,0.15
+Clinical Psychology,Micro,0.13
+Clinical Psychology,Rural,0.13
+Clinical Psychology,CEAC,0.13
+Clinical Social Work,Large Metro,0.25
+Clinical Social Work,Metro,0.25
+Clinical Social Work,Micro,0.22
+Clinical Social Work,Rural,0.22
+Clinical Social Work,CEAC,0.22
+Dermatology,Large Metro,0.16
+Dermatology,Metro,0.16
+Dermatology,Micro,0.14
+Dermatology,Rural,0.14
+Dermatology,CEAC,0.14
+Endocrinology,Large Metro,0.04
+Endocrinology,Metro,0.04
+Endocrinology,Micro,0.03
+Endocrinology,Rural,0.03
+Endocrinology,CEAC,0.03
+ENT/Otolaryngology,Large Metro,0.06
+ENT/Otolaryngology,Metro,0.06
+ENT/Otolaryngology,Micro,0.05
+ENT/Otolaryngology,Rural,0.05
+ENT/Otolaryngology,CEAC,0.05
+Gastroenterology,Large Metro,0.12
+Gastroenterology,Metro,0.12
+Gastroenterology,Micro,0.1
+Gastroenterology,Rural,0.1
+Gastroenterology,CEAC,0.1
+General Surgery,Large Metro,0.28
+General Surgery,Metro,0.28
+General Surgery,Micro,0.24
+General Surgery,Rural,0.24
+General Surgery,CEAC,0.24
+Gynecology OB/GYN,Large Metro,0.04
+Gynecology OB/GYN,Metro,0.04
+Gynecology OB/GYN,Micro,0.03
+Gynecology OB/GYN,Rural,0.03
+Gynecology OB/GYN,CEAC,0.03
+Infectious Diseases,Large Metro,0.03
+Infectious Diseases,Metro,0.03
+Infectious Diseases,Micro,0.03
+Infectious Diseases,Rural,0.03
+Infectious Diseases,CEAC,0.03
+Nephrology,Large Metro,0.09
+Nephrology,Metro,0.09
+Nephrology,Micro,0.08
+Nephrology,Rural,0.08
+Nephrology,CEAC,0.08
+Neurology,Large Metro,0.12
+Neurology,Metro,0.12
+Neurology,Micro,0.1
+Neurology,Rural,0.1
+Neurology,CEAC,0.1
+Neurosurgery,Large Metro,0.01
+Neurosurgery,Metro,0.01
+Neurosurgery,Micro,0.01
+Neurosurgery,Rural,0.01
+Neurosurgery,CEAC,0.01
+Oncology Medical/Surgical,Large Metro,0.19
+Oncology Medical/Surgical,Metro,0.19
+Oncology Medical/Surgical,Micro,0.16
+Oncology Medical/Surgical,Rural,0.16
+Oncology Medical/Surgical,CEAC,0.16
+Oncology Radiation,Large Metro,0.06
+Oncology Radiation,Metro,0.06
+Oncology Radiation,Micro,0.05
+Oncology Radiation,Rural,0.05
+Oncology Radiation,CEAC,0.05
+Ophthalmology,Large Metro,0.24
+Ophthalmology,Metro,0.24
+Ophthalmology,Micro,0.2
+Ophthalmology,Rural,0.2
+Ophthalmology,CEAC,0.2
+Orthopedic Surgery,Large Metro,0.2
+Orthopedic Surgery,Metro,0.2
+Orthopedic Surgery,Micro,0.17
+Orthopedic Surgery,Rural,0.17
+Orthopedic Surgery,CEAC,0.17
+Physiatry Rehabilitative Med,Large Metro,0.04
+Physiatry Rehabilitative Med,Metro,0.04
+Physiatry Rehabilitative Med,Micro,0.03
+Physiatry Rehabilitative Med,Rural,0.03
+Physiatry Rehabilitative Med,CEAC,0.03
+Plastic Surgery,Large Metro,0.01
+Plastic Surgery,Metro,0.01
+Plastic Surgery,Micro,0.01
+Plastic Surgery,Rural,0.01
+Plastic Surgery,CEAC,0.01
+Podiatry,Large Metro,0.19
+Podiatry,Metro,0.19
+Podiatry,Micro,0.16
+Podiatry,Rural,0.16
+Podiatry,CEAC,0.16
+Psychiatry,Large Metro,0.14
+Psychiatry,Metro,0.14
+Psychiatry,Micro,0.12
+Psychiatry,Rural,0.12
+Psychiatry,CEAC,0.12
+Pulmonology,Large Metro,0.13
+Pulmonology,Metro,0.13
+Pulmonology,Micro,0.11
+Pulmonology,Rural,0.11
+Pulmonology,CEAC,0.11
+Rheumatology,Large Metro,0.07
+Rheumatology,Metro,0.07
+Rheumatology,Micro,0.06
+Rheumatology,Rural,0.06
+Rheumatology,CEAC,0.06
+Urology,Large Metro,0.12
+Urology,Metro,0.12
+Urology,Micro,0.1
+Urology,Rural,0.1
+Urology,CEAC,0.1
+Vascular Surgery,Large Metro,0.02
+Vascular Surgery,Metro,0.02
+Vascular Surgery,Micro,0.02
+Vascular Surgery,Rural,0.02
+Vascular Surgery,CEAC,0.02
+Cardiothoracic Surgery,Large Metro,0.01
+Cardiothoracic Surgery,Metro,0.01
+Cardiothoracic Surgery,Micro,0.01
+Cardiothoracic Surgery,Rural,0.01
+Cardiothoracic Surgery,CEAC,0.01
+Acute Inpatient Hospitals,Large Metro,12.2
+Acute Inpatient Hospitals,Metro,12.2
+Acute Inpatient Hospitals,Micro,12.2
+Acute Inpatient Hospitals,Rural,12.2
+Acute Inpatient Hospitals,CEAC,12.2
+Cardiac Surgery Program,Large Metro,
+Cardiac Surgery Program,Metro,
+Cardiac Surgery Program,Micro,
+Cardiac Surgery Program,Rural,
+Cardiac Surgery Program,CEAC,
+Cardiac Catheterization,Large Metro,
+Cardiac Catheterization,Metro,
+Cardiac Catheterization,Micro,
+Cardiac Catheterization,Rural,
+Cardiac Catheterization,CEAC,
+Critical Care ICU,Large Metro,
+Critical Care ICU,Metro,
+Critical Care ICU,Micro,
+Critical Care ICU,Rural,
+Critical Care ICU,CEAC,
+Surgical Services ASC,Large Metro,
+Surgical Services ASC,Metro,
+Surgical Services ASC,Micro,
+Surgical Services ASC,Rural,
+Surgical Services ASC,CEAC,
+Skilled Nursing Facility,Large Metro,
+Skilled Nursing Facility,Metro,
+Skilled Nursing Facility,Micro,
+Skilled Nursing Facility,Rural,
+Skilled Nursing Facility,CEAC,
+Diagnostic Radiology,Large Metro,
+Diagnostic Radiology,Metro,
+Diagnostic Radiology,Micro,
+Diagnostic Radiology,Rural,
+Diagnostic Radiology,CEAC,
+Mammography,Large Metro,
+Mammography,Metro,
+Mammography,Micro,
+Mammography,Rural,
+Mammography,CEAC,
+Physical Therapy,Large Metro,
+Physical Therapy,Metro,
+Physical Therapy,Micro,
+Physical Therapy,Rural,
+Physical Therapy,CEAC,
+Occupational Therapy,Large Metro,
+Occupational Therapy,Metro,
+Occupational Therapy,Micro,
+Occupational Therapy,Rural,
+Occupational Therapy,CEAC,
+Speech Therapy,Large Metro,
+Speech Therapy,Metro,
+Speech Therapy,Micro,
+Speech Therapy,Rural,
+Speech Therapy,CEAC,
+Inpatient Psychiatric,Large Metro,
+Inpatient Psychiatric,Metro,
+Inpatient Psychiatric,Micro,
+Inpatient Psychiatric,Rural,
+Inpatient Psychiatric,CEAC,
+Outpatient Infusion/Chemo,Large Metro,
+Outpatient Infusion/Chemo,Metro,
+Outpatient Infusion/Chemo,Micro,
+Outpatient Infusion/Chemo,Rural,
+Outpatient Infusion/Chemo,CEAC,
+Outpatient Behavioral Health,Large Metro,
+Outpatient Behavioral Health,Metro,
+Outpatient Behavioral Health,Micro,
+Outpatient Behavioral Health,Rural,
+Outpatient Behavioral Health,CEAC,
