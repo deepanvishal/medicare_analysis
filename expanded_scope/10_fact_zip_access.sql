@@ -1,0 +1,12 @@
+-- ============================================================
+-- 10 - ms_fact_zip_access                                    [SQL / BigQuery]
+-- WHAT   : For each bene zip x cms_specialty x plan_type, count providers within
+--          the CMS distance threshold and flag has_access.
+-- WHY    : Test 1 (access) building block; rolled up to county % downstream.
+-- SOURCE : ms_stg_beneficiaries + ms_ref_zip_reference
+--          + ms_stg_providers_multi_specialty + ms_ref_time_distance
+-- OUTPUT : ms_fact_zip_access   grain: bene_zip x cms_specialty x plan_type
+-- NOTE   : distance = ST_DISTANCE(centroid, centroid) / 1609.34.
+--          Sparse table -- only zips with >= 1 provider are stored.
+-- ============================================================
+-- TODO: implement

@@ -1,0 +1,11 @@
+-- ============================================================
+-- 08 - ms_stg_beneficiaries                                  [SQL / BigQuery]
+-- WHAT   : Demand side. One row per zip with population, Medicare eligibles,
+--          county attributes, and compliance_threshold.
+-- WHY    : Denominator for Test 1 access %; the county rollup grain.
+-- SOURCE : ms_ref_zip_reference
+--          anbc-hcb-prod...cms_medicare_penetration   (county eligibles / enrolled)
+-- OUTPUT : ms_stg_beneficiaries   grain: zip_code   (carries state_cd, county_fips)
+-- NOTE   : lat/long NOT stored here; joined from ms_ref_zip_reference at query time.
+-- ============================================================
+-- TODO: implement

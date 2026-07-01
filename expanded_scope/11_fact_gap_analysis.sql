@@ -1,0 +1,14 @@
+-- ============================================================
+-- 11 - ms_fact_gap_analysis                                  [SQL / BigQuery]
+-- WHAT   : County compliance output. Full county x specialty x plan_type grid;
+--          Test 1 (access %) + Test 2 (actual_count vs HSD required_count).
+-- WHY    : THE table the report reads. compliance_status = COMPLIANT iff both pass.
+-- SOURCE : ms_stg_beneficiaries + ms_ref_zip_reference + ms_stg_providers_multi_specialty
+--          + ms_ref_specialty_crosswalk + ms_ref_time_distance
+--          + ms_ref_hsd_required_counts + ms_fact_zip_access + hosp_list_cmi
+-- OUTPUT : ms_fact_gap_analysis   grain: county_fips x cms_specialty x plan_type
+-- NOTE   : Carries state_cd. distinct_providers CTE re-counts from source to avoid
+--          double-counting. ALL county joins keyed on county_fips (NOT county_name).
+--          Acute Inpatient actual_count = SUM(hosp_list_cmi.Beds).
+-- ============================================================
+-- TODO: implement

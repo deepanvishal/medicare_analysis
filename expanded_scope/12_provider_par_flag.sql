@@ -1,0 +1,12 @@
+-- ============================================================
+-- 12 - ms_provider_par_flag                                  [SQL / BigQuery]
+-- WHAT   : Provider participation flags -- Aetna claims activity + CMS Original
+--          Medicare participation, classified into status categories.
+-- WHY    : Feeds the participation tabs of the report.
+-- SOURCE : mdcr_base_claim + ms_stg_providers_multi_specialty
+--          + ms_ref_county_classification + xwalk_pin_npi_all
+--          + cms_medicare_physician_ffs_2023
+-- OUTPUT : ms_provider_par_flag   grain: provider x plan x specialty x county
+-- NOTE   : CMS FFS filter rndrng_prvdr_state_abrvtn IN scope states (not just FL).
+-- ============================================================
+-- TODO: implement
