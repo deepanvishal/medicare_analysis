@@ -25,44 +25,42 @@ DDL = f"""
 CREATE OR REPLACE TABLE `{OUT}`
 OPTIONS (labels=[("owner", "deepan_thulasi_aetna_com")])
 AS
-WITH scope_zips AS (
+WITH zip_county AS (
+  -- every zip x scope-county overlap via a spatial JOIN (a regular join CAN be
+  -- spatial-only; the EXISTS semi-join could not). Rank by overlap area per zip.
   SELECT
     z.zip_code,
-    z.area_land_meters / 2589988.11                                AS area_sq_miles,
-    ROUND(SQRT((z.area_land_meters / 2589988.11) / ACOS(-1)), 2)   AS zip_radius_miles,
-    ST_Y(z.internal_point_geom)                                    AS zip_lat,
-    ST_X(z.internal_point_geom)                                    AS zip_long,
-    z.zip_code_geom
-  FROM `{ZIPS}` z
-  WHERE EXISTS (
-    SELECT 1 FROM `{COUNTIES}` c
-    WHERE c.state_fips_code IN {FIPS}
-      AND ST_INTERSECTS(z.zip_code_geom, c.county_geom)
-  )
-),
-zip_population AS (
-  SELECT geo_id AS zip_code, total_pop FROM `{ZIP_POP}`
-),
-zip_to_county AS (
-  SELECT
-    z.zip_code,
+    z.area_land_meters,
+    z.internal_point_geom,
     c.geo_id                                                       AS county_fips,
     ROW_NUMBER() OVER (
       PARTITION BY z.zip_code
       ORDER BY ST_AREA(ST_INTERSECTION(z.zip_code_geom, c.county_geom)) DESC
     )                                                              AS rnk
-  FROM scope_zips z
+  FROM `{ZIPS}` z
   JOIN `{COUNTIES}` c
     ON c.state_fips_code IN {FIPS}
     AND ST_INTERSECTS(z.zip_code_geom, c.county_geom)
+),
+scope_zips AS (
+  -- one row per zip = its largest-overlap scope county (keeps border zips)
+  SELECT zip_code, area_land_meters, internal_point_geom, county_fips
+  FROM zip_county
+  WHERE rnk = 1
+),
+zip_population AS (
+  SELECT geo_id AS zip_code, total_pop FROM `{ZIP_POP}`
 )
 SELECT
-  z.zip_code, z.area_sq_miles, z.zip_radius_miles, z.zip_lat, z.zip_long,
-  p.total_pop                                                      AS zip_population,
-  m.county_fips
-FROM scope_zips z
-LEFT JOIN zip_population p ON z.zip_code = p.zip_code
-LEFT JOIN zip_to_county  m ON z.zip_code = m.zip_code AND m.rnk = 1
+  s.zip_code,
+  s.area_land_meters / 2589988.11                                AS area_sq_miles,
+  ROUND(SQRT((s.area_land_meters / 2589988.11) / ACOS(-1)), 2)   AS zip_radius_miles,
+  ST_Y(s.internal_point_geom)                                    AS zip_lat,
+  ST_X(s.internal_point_geom)                                    AS zip_long,
+  p.total_pop                                                    AS zip_population,
+  s.county_fips
+FROM scope_zips s
+LEFT JOIN zip_population p ON s.zip_code = p.zip_code
 """
 
 CHECKS = {
