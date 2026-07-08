@@ -44,23 +44,23 @@ county_penetration AS (
     AND ingest_time = latest_penetration.max_ingest
 ),
 census_age AS (
-  SELECT geo_id AS county_fips, '60-64' AS age_band,
+  SELECT LPAD(CAST(geo_id AS STRING), 5, '0') AS county_fips, '60-64' AS age_band,
          male_60_to_61 + male_62_to_64 + female_60_to_61 + female_62_to_64 AS band_pop
   FROM `{ACS}`
   UNION ALL
-  SELECT geo_id AS county_fips, '65-69' AS age_band,
+  SELECT LPAD(CAST(geo_id AS STRING), 5, '0') AS county_fips, '65-69' AS age_band,
          male_65_to_66 + male_67_to_69 + female_65_to_66 + female_67_to_69 AS band_pop
   FROM `{ACS}`
   UNION ALL
-  SELECT geo_id AS county_fips, '70-74' AS age_band,
+  SELECT LPAD(CAST(geo_id AS STRING), 5, '0') AS county_fips, '70-74' AS age_band,
          male_70_to_74 + female_70_to_74 AS band_pop
   FROM `{ACS}`
   UNION ALL
-  SELECT geo_id AS county_fips, '75-79' AS age_band,
+  SELECT LPAD(CAST(geo_id AS STRING), 5, '0') AS county_fips, '75-79' AS age_band,
          male_75_to_79 + female_75_to_79 AS band_pop
   FROM `{ACS}`
   UNION ALL
-  SELECT geo_id AS county_fips, '80+' AS age_band,
+  SELECT LPAD(CAST(geo_id AS STRING), 5, '0') AS county_fips, '80+' AS age_band,
          male_80_to_84 + male_85_and_over + female_80_to_84 + female_85_and_over AS band_pop
   FROM `{ACS}`
 ),
