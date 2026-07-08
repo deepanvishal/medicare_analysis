@@ -36,7 +36,7 @@ WITH demand_bridged AS (
     d.market_demand_visits,
     d.ma_demand_visits
   FROM `{DEM}` d
-  JOIN `{XWALK}` x ON d.specialty_ctg_cd = x.specialty_ctg_cd
+  JOIN `{XWALK}` x ON d.specialty_ctg_cd = x.aetna_cd
 )
 SELECT
   f.state_cd,
