@@ -14,6 +14,7 @@ OUTPUT : expanded_scope/eda_findings.md
 Run    : python expanded_scope/eda_runner.py
 """
 
+import os
 import datetime
 import config as cfg
 
@@ -232,7 +233,10 @@ w("Not run by this script. Download the county-level CMS Geographic Variation Pu
   "Do NOT load to BigQuery yet.")
 w()
 
-path = cfg.repo_path("expanded_scope", "eda_findings.md")
-with open(path, "w") as f:
+# write next to this script; create the folder if missing; utf-8 for the ·/— chars
+here = os.path.dirname(os.path.abspath(__file__))
+os.makedirs(here, exist_ok=True)
+path = os.path.join(here, "eda_findings.md")
+with open(path, "w", encoding="utf-8") as f:
     f.write("\n".join(out))
 print(f"\ndone. wrote {path} ({len(out)} lines)")
