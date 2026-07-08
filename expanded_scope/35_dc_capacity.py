@@ -146,7 +146,7 @@ CHECKS_PROVIDER = {
 CHECKS_COUNTY = {
     "capacity vs market demand order of magnitude per state (cross-pillar sanity)":
         f"SELECT c.state_cd, CAST(SUM(c.capacity_visits) AS INT64) AS capacity, "
-        f"(SELECT CAST(SUM(d.market_demand_visits) AS INT64) FROM `{DEMAND}` d "
+        f"(SELECT CAST(SUM(d.total_demand_visits) AS INT64) FROM `{DEMAND}` d "
         f"WHERE d.state_cd = c.state_cd) AS market_demand "
         f"FROM `{OUT2}` c GROUP BY 1 ORDER BY 1",
     "top 10 capacity cells":
