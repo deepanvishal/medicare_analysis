@@ -11,18 +11,19 @@ GRAIN : state_cd x county_fips x cms_specialty x plan_type
 NOTE : Gap is like-for-like: ma_demand_visits minus capacity_visits (both built from the Aetna member
        population and observed-visit ruler). market_demand_visits appears as context only via
        market_opportunity_ratio; a subtraction against market demand is not meaningful because capacity
-       is measured on the Aetna-observed ruler. Demand is at county x specialty_ctg_cd and is joined to
-       the compliance grid by county only; the specialty taxonomies (specialty_ctg_cd vs cms_specialty)
-       do not map 1:1, so demand columns are NULL where no category matches the CMS specialty name.
+       is measured on the Aetna-observed ruler. Demand is bridged to CMS specialties via
+       ref_specialty_crosswalk (specialty_ctg_cd grain); cells whose category is absent from the
+       crosswalk remain NO_DEMAND_MAPPING.
 Run  : python expanded_scope/36_dc_gap.py
 """
 
 import config as cfg
 
-OUT  = cfg.table("dc_gap")
-FACT = cfg.table("fact_gap_analysis")
-DEM  = cfg.table("dc_demand")
-CAP  = cfg.table("dc_capacity")
+OUT   = cfg.table("dc_gap")
+FACT  = cfg.table("fact_gap_analysis")
+DEM   = cfg.table("dc_demand")
+CAP   = cfg.table("dc_capacity")
+XWALK = cfg.base("ref_specialty_crosswalk")
 
 DDL = f"""
 CREATE OR REPLACE TABLE `{OUT}`
@@ -31,10 +32,11 @@ AS
 WITH demand_bridged AS (
   SELECT
     d.county_fips,
-    UPPER(d.specialty_desc) AS specialty_key,
+    x.cms_specialty,
     d.market_demand_visits,
     d.ma_demand_visits
   FROM `{DEM}` d
+  JOIN `{XWALK}` x ON d.specialty_ctg_cd = x.specialty_ctg_cd
 )
 SELECT
   f.state_cd,
@@ -67,7 +69,7 @@ SELECT
    AND d.ma_demand_visits - COALESCE(c.capacity_visits, 0) > 0) AS risk_flag
 FROM `{FACT}` f
 LEFT JOIN demand_bridged d
-  ON f.county_fips = d.county_fips AND UPPER(f.cms_specialty) = d.specialty_key
+  ON f.county_fips = d.county_fips AND f.cms_specialty = d.cms_specialty
 LEFT JOIN `{CAP}` c
   ON f.county_fips = c.county_fips AND f.cms_specialty = c.cms_specialty
   AND f.plan_type = c.plan_type

@@ -2,8 +2,9 @@
 37 - ms_dc_forecast_example   [PYTHON runner / BigQuery DDL]   *** DEMAND/CAPACITY EXTENSION -- M8 ***
 
 WHAT : Forecast example. One row per county_fips x cms_specialty x plan_type x
-       forecast_month (12 rows per example cell); example cells are the single
-       highest-gap risk_flag cell per state, selected inside the query.
+       forecast_month (12 rows per example cell); example cells are the compliant
+       cells closest to tipping (smallest capacity surplus) per state, selected
+       inside the query, so the crossover month is meaningful.
 WHY  : Shows how the gap table projects forward: monthly demand shape x demographic
        growth vs flat capacity, and where the crossover months land.
 SOURCE: ms_dc_gap + A870800_medicare_analysis_2025_claims
@@ -33,7 +34,7 @@ WITH example_cells AS (
     SELECT *,
            ROW_NUMBER() OVER (PARTITION BY state_cd ORDER BY demand_capacity_gap DESC) AS rn
     FROM `{GAP}`
-    WHERE risk_flag
+    WHERE compliance_status = 'COMPLIANT' AND demand_capacity_gap < 0
   )
   WHERE rn = 1
 ),
