@@ -233,8 +233,9 @@ w("Not run by this script. Download the county-level CMS Geographic Variation Pu
   "Do NOT load to BigQuery yet.")
 w()
 
-# write next to this script; create the folder if missing; utf-8 for the ·/— chars
-here = os.path.dirname(os.path.abspath(__file__))
+# cfg.repo_path uses config's __file__ (always defined, even in an interactive session,
+# unlike this script's __file__). create the folder if missing; utf-8 for the ·/— chars
+here = cfg.repo_path("expanded_scope")
 os.makedirs(here, exist_ok=True)
 path = os.path.join(here, "eda_findings.md")
 with open(path, "w", encoding="utf-8") as f:
