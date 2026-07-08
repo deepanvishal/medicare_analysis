@@ -40,19 +40,28 @@ MBR_2025 = f"""(
   ) WHERE rn = 1
 )"""
 
+print("eda_runner starting -- connecting to BigQuery (read-only)...", flush=True)
 client = cfg.client()
+print(f"connected. dataset = {DS}", flush=True)
 out = []
 
 
 def w(text=""):
     out.append(text)
+    # echo each section header to the console so progress is visible while running
+    if text.startswith("## "):
+        print(f"\n{text}", flush=True)
 
 
 def run(label, sql, max_rows=60):
+    # print the query label before it runs, then the row count (or error) after it returns,
+    # so a slow BigQuery call shows what it is waiting on
+    print(f"  - {label} ...", end="", flush=True)
     w(f"**{label}**")
     w("```")
     try:
         rows = list(client.query(sql).result())
+        print(f" ok ({len(rows)} rows)", flush=True)
         if not rows:
             w("(zero rows)")
         for i, r in enumerate(rows):
@@ -61,6 +70,7 @@ def run(label, sql, max_rows=60):
                 break
             w(str(dict(r)))
     except Exception as e:
+        print(f" ERROR: {e}", flush=True)
         w(f"ERROR: {e}")
     w("```")
     w()
@@ -225,4 +235,4 @@ w()
 path = cfg.repo_path("expanded_scope", "eda_findings.md")
 with open(path, "w") as f:
     f.write("\n".join(out))
-print(f"wrote {path}")
+print(f"\ndone. wrote {path} ({len(out)} lines)")
