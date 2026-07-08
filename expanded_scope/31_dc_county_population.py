@@ -45,7 +45,7 @@ county_penetration AS (
 ),
 census_age AS (
   SELECT geo_id AS county_fips, '60-64' AS age_band,
-         male_60_61 + male_62_64 + female_60_to_61 + female_62_to_64 AS band_pop
+         male_60_to_61 + male_62_to_64 + female_60_to_61 + female_62_to_64 AS band_pop
   FROM `{ACS}`
   UNION ALL
   SELECT geo_id AS county_fips, '65-69' AS age_band,
