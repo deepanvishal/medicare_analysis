@@ -117,6 +117,10 @@ CHECKS = {
         f"SELECT (SELECT SUM(aetna_ma_members) FROM `{OUT}`) AS in_pop_table, "
         f"(SELECT COUNT(*) FROM `{MEMDIM}` WHERE age_band != 'UNDER_60' "
         f"AND county_fips IS NOT NULL) AS in_member_dim",
+    "null gate: age_share and eligibles must be populated per state (expect all zeros)":
+        f"SELECT state_cd, COUNTIF(age_share IS NULL) AS null_share, "
+        f"COUNTIF(county_eligibles_total IS NULL) AS null_eligibles "
+        f"FROM `{OUT}` GROUP BY 1 ORDER BY 1",
 }
 
 
