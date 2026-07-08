@@ -233,11 +233,15 @@ w("Not run by this script. Download the county-level CMS Geographic Variation Pu
   "Do NOT load to BigQuery yet.")
 w()
 
-# cfg.repo_path uses config's __file__ (always defined, even in an interactive session,
-# unlike this script's __file__). create the folder if missing; utf-8 for the ·/— chars
-here = cfg.repo_path("expanded_scope")
-os.makedirs(here, exist_ok=True)
-path = os.path.join(here, "eda_findings.md")
+# resolve the output folder WITHOUT relying on __file__ (undefined in interactive/exec
+# sessions): try the script dir, else fall back to the current working directory.
+try:
+    base = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    base = os.getcwd()
+os.makedirs(base, exist_ok=True)
+path = os.path.join(base, "eda_findings.md")
+print(f"\nwriting findings to: {path}", flush=True)
 with open(path, "w", encoding="utf-8") as f:
     f.write("\n".join(out))
-print(f"\ndone. wrote {path} ({len(out)} lines)")
+print(f"done. wrote {path} ({len(out)} lines)")
