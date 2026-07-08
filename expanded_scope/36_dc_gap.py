@@ -9,7 +9,7 @@ WHY  : The end product of the demand/capacity extension; joins compliance,
 SOURCE: ms_fact_gap_analysis + ms_dc_demand + ms_dc_capacity
 GRAIN : state_cd x county_fips x cms_specialty x plan_type
 NOTE : Gap is like-for-like: ma_demand_visits minus capacity_visits (both built from the Aetna member
-       population and observed-visit ruler). market_demand_visits appears as context only via
+       population and observed-visit ruler). total_demand_visits appears as context only via
        market_opportunity_ratio; a subtraction against market demand is not meaningful because capacity
        is measured on the Aetna-observed ruler. Demand is bridged to CMS specialties via
        ref_specialty_crosswalk (specialty_ctg_cd grain); cells whose category is absent from the
@@ -33,7 +33,7 @@ WITH demand_bridged AS (
   SELECT
     d.county_fips,
     x.cms_specialty,
-    d.market_demand_visits,
+    d.total_demand_visits,
     d.ma_demand_visits
   FROM `{DEM}` d
   JOIN `{XWALK}` x ON d.specialty_ctg_cd = x.aetna_cd
@@ -51,13 +51,13 @@ SELECT
   f.required_provider_count,
   f.actual_count,
   f.provider_gap,
-  d.market_demand_visits,
+  d.total_demand_visits,
   d.ma_demand_visits,
   c.contracted_providers,
   c.active_providers,
   COALESCE(c.capacity_visits, 0) AS capacity_visits,
   d.ma_demand_visits - COALESCE(c.capacity_visits, 0) AS demand_capacity_gap,
-  SAFE_DIVIDE(COALESCE(c.capacity_visits, 0), d.market_demand_visits) AS market_opportunity_ratio,
+  SAFE_DIVIDE(COALESCE(c.capacity_visits, 0), d.total_demand_visits) AS market_opportunity_ratio,
   CASE
     WHEN d.ma_demand_visits IS NULL THEN 'NO_DEMAND_MAPPING'
     WHEN d.ma_demand_visits - COALESCE(c.capacity_visits, 0) > 0.2 * d.ma_demand_visits THEN 'DESERT'

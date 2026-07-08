@@ -1,13 +1,13 @@
 """
 33 - ms_dc_demand   [PYTHON runner / BigQuery DDL]   *** DEMAND/CAPACITY EXTENSION -- M4 ***
 
-WHAT : Demand. One row per county_fips x specialty_ctg_cd: expected market visits
+WHAT : Demand. One row per county_fips x specialty_ctg_cd: expected total visits
        (eligibles x blended rate) and Aetna MA visits (members x resolved rate).
 WHY  : The demand side of the demand/capacity gap; converts rates and population
        into visit volumes per county and specialty.
 SOURCE: ms_dc_rate + ms_dc_county_population + ms_dc_member_dim
 GRAIN : county_fips x specialty_ctg_cd
-NOTE : Market demand applies the state morbidity mix to every county (county_morbidity_index pending);
+NOTE : Total demand applies the state morbidity mix to every county (county_morbidity_index pending);
        rates are MA-proxy (rate_basis = MA_PROXY). Thin cells resolve to the ALL-state pooled rate and
        are counted in pct_cells_thin.
 Run  : python expanded_scope/33_dc_demand.py
@@ -70,7 +70,7 @@ market_demand AS (
     ANY_VALUE(p.county_name) AS county_name,
     b.specialty_ctg_cd,
     ANY_VALUE(b.specialty_desc) AS specialty_desc,
-    SUM(p.eligibles_in_band * b.band_rate) AS market_demand_visits,
+    SUM(p.eligibles_in_band * b.band_rate) AS total_demand_visits,
     SAFE_DIVIDE(SUM(CAST(b.any_fallback_in_band AS INT64)), COUNT(*)) AS pct_cells_thin
   FROM `{POP}` p
   JOIN blended_rate b
@@ -100,7 +100,7 @@ SELECT
   md.county_name,
   md.specialty_ctg_cd,
   md.specialty_desc,
-  md.market_demand_visits,
+  md.total_demand_visits,
   COALESCE(ma.ma_demand_visits, 0) AS ma_demand_visits,
   'MA_PROXY' AS rate_basis,
   md.pct_cells_thin
@@ -115,10 +115,10 @@ CHECKS = {
         f"FROM `{OUT}` GROUP BY 1 ORDER BY 1",
     "top 10 market demand cells (eyeball: big counties x big specialties)":
         f"SELECT state_cd, county_name, specialty_ctg_cd, "
-        f"CAST(market_demand_visits AS INT64) AS market_demand "
-        f"FROM `{OUT}` ORDER BY market_demand_visits DESC LIMIT 10",
+        f"CAST(total_demand_visits AS INT64) AS market_demand "
+        f"FROM `{OUT}` ORDER BY total_demand_visits DESC LIMIT 10",
     "market vs ma demand ratio per state (market should exceed ma everywhere)":
-        f"SELECT state_cd, CAST(SUM(market_demand_visits) AS INT64) AS market, "
+        f"SELECT state_cd, CAST(SUM(total_demand_visits) AS INT64) AS market, "
         f"CAST(SUM(ma_demand_visits) AS INT64) AS ma FROM `{OUT}` GROUP BY 1 ORDER BY 1",
     "thin-cell exposure (counties with pct_cells_thin > 0.5)":
         f"SELECT state_cd, COUNT(DISTINCT county_fips) AS counties_majority_thin "

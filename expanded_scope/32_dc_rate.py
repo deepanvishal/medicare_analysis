@@ -49,7 +49,7 @@ grid AS (
   FROM (SELECT DISTINCT specialty_ctg_cd, specialty_desc FROM visits) sp
   CROSS JOIN (SELECT DISTINCT state_cd FROM members) s
   CROSS JOIN UNNEST(['60-64', '65-69', '70-74', '75-79', '80+']) AS age_band
-  CROSS JOIN UNNEST(['LOW', 'MEDIUM', 'HIGH']) AS morbidity_level
+  CROSS JOIN UNNEST(['CHRONIC', 'NON_CHRONIC']) AS morbidity_level
 ),
 state_rates AS (
   SELECT
