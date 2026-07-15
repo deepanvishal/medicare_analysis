@@ -100,3 +100,40 @@ where a.summarized_srv_ind = 'Y'
   and ( g.submarket    in ({{SUBMARKET_LIST}})   -- provider in footprint
      or mmkt.submarket in ({{SUBMARKET_LIST}}) ) -- OR member in footprint
 ;
+
+
+
+drop table if exists anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_analysis_membership;
+create table anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_analysis_membership
+options (labels=[("owner", "deepan_thulasi_aetna_com")]) as
+with mkt as (
+  select distinct
+    ifnull(b.fips_new, a.county_cd) as county_cd,
+    a.state, a.market, a.submarket
+  from anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.mdcr_base_market a
+  left join anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.MA_CT_fips_changes_xwalk b
+    on a.county_cd = b.fips_old
+),
+zipx as (
+  select zip_cd, min(county_cd) as county_cd, min(state_postal_cd) as state_postal_cd
+  from edp-prod-hcbstorage.edp_hcb_core_cnsv.ZIP_X_ST_X_COUNTY
+  group by zip_cd
+)
+select distinct
+  m.member_id
+, extract(year  from m.eff_dt) as eff_yr
+, extract(month from m.eff_dt) as eff_mo
+, m.age_nbr
+, m.gender_cd
+, coalesce(m.member_county_cd, z.county_cd) as mbr_county_cd
+, k.state as mbr_state
+, k.submarket as mbr_submarket
+from edp-prod-hcbstorage.edp_hcb_core_cnsv.EMIS_MEMBERSHIP m
+left join zipx z
+  on trim(cast(m.zip_cd as string)) = trim(cast(z.zip_cd as string))
+left join mkt k
+  on trim(cast(coalesce(m.member_county_cd, z.county_cd) as string)) = trim(cast(k.county_cd as string))
+where m.medical_ind = 'Y'
+  and m.business_ln_cd in ('CP','ME')
+  and extract(year from m.eff_dt) between 2023 and 2025
+;
