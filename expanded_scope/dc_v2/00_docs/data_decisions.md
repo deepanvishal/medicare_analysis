@@ -460,6 +460,15 @@ columns. If table size becomes a problem, apply the trim then. Source:
 EMIS_CLAIM_LINE joined to members extract, provider resolution via
 epdb_dw_prvdr_id case logic, county from PROVIDER_DM.
 
+h1 result (2024, notebook 40): pct_members_mapped = 0.2896, pct_allowed
+mapped = 0.3424, pct_claim_lines_mapped = 0.2150. Primary-only reviewed
+against these numbers and REAFFIRMED: chronic flag is interpreted as
+"member has an HCC condition as a primary visit driver," not full chronic
+prevalence. Consequences accepted: (1) prevalence features undercount but
+remain comparable across geographies; (2) notebook 54 risk scores computed
+from primary dx only will run below official CMS scores — caveat required
+on the risk tab.
+
 ---
 
 ## DD 08 — Membership Source and Geography Chain
