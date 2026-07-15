@@ -62,6 +62,7 @@ DARK_BLUE, MID_BLUE, LIGHT_BLUE = "1F3864", "2E75B6", "D6E4F0"
 GREY, DARK_GREY, WHITE = "F2F2F2", "595959", "FFFFFF"
 LIGHT_GREEN, LIGHT_RED = "E2EFDA", "FFE0E0"
 LIGHT_GOLD = "FFF2CC"
+COMPLIANCE_RED = "F8CBAD"
 
 
 # ---------- styling helpers (from 13_build_report.py) ----------
@@ -266,6 +267,11 @@ def build_overview(wb):
     r = kv(ws, r, "Caveat 3",
            "Rows with expected_error_band C should be read at submarket or state rollup, "
            "not individually.", h=26)
+    r = blank(ws, r)
+    r = kv(ws, r, "Compliance and the gap",
+           "Compliance columns reflect the CMS minimum-provider rules; the gap columns show "
+           "whether the network actually has enough visit capacity - a county can be "
+           "compliant and still short.", h=40)
     ws.freeze_panes = "A3"
     return 0
 
@@ -301,25 +307,19 @@ GAP_COLS = [
     ("county_fips", AS_STORED, 11, None, "left"),
     ("county_name", "county name from ref_county, for display", 16, None, "left"),
     ("cms_specialty", AS_STORED, 24, None, "left"),
-    ("demand_current_book",
-     "current-method demand for our enrolled members aged 60 and above",
-     14, "#,##0", "right"),
-    ("capacity_current",
-     "current-method capacity carried from the v1 pipeline",
-     13, "#,##0", "right"),
-    ("gap_current_book",
-     "demand_current_book minus capacity_current; positive = shortage",
-     13, "#,##0", "right"),
     ("demand_visits_2025_actual",
      "visits that actually happened in 2025 - context for the prediction beside it; "
      "late-year claims may still be arriving, so this can slightly undercount",
      14, "#,##0", "right"),
-    ("demand_next_12m_xgb",
-     "model estimate of visits members in this county will need in 2026",
-     14, "#,##0", "right"),
     ("capacity_visits_2025_actual",
      "visits that actually happened in 2025 - context for the prediction beside it; "
      "late-year claims may still be arriving, so this can slightly undercount",
+     14, "#,##0", "right"),
+    ("gap_2025_actual",
+     "real 2025 visits: demand minus capacity; cross-county patient flow makes this nonzero",
+     13, "#,##0", "right"),
+    ("demand_next_12m_xgb",
+     "model estimate of visits members in this county will need in 2026",
      14, "#,##0", "right"),
     ("capacity_next_12m_bottom_up",
      "sum of per-provider model estimates of visits providers here will deliver in 2026",
@@ -327,16 +327,17 @@ GAP_COLS = [
     ("gap_model_2026",
      "demand_next_12m_xgb minus capacity_next_12m_bottom_up; positive = shortage",
      13, "#,##0", "right"),
-    ("capacity_to_demand_ratio",
-     "capacity divided by demand; 1.0 = exactly enough",
-     12, "0.00", "right"),
-    ("capacity_potential_p75",
-     "if every provider here delivered like the busiest quarter of their local peers",
-     14, "#,##0", "right"),
     ("gap_status",
      "UNDER = members need more visits than providers can deliver; OVER = the reverse; "
      "no middle label - read the gap and ratio columns for degree",
      10, None, "center"),
+    ("capacity_to_demand_ratio",
+     "capacity divided by demand; 1.0 = exactly enough",
+     12, "0.00", "right"),
+    ("compliance_status",
+     "pass or fail against the CMS minimum-provider rules, from the compliance pipeline; "
+     "failed if any plan type fails",
+     15, None, "center"),
     ("expected_error_pct",
      "the measured average percent miss behind the band",
      11, "0.0%", "right"),
@@ -344,18 +345,29 @@ GAP_COLS = [
      "A = model missed by 25% or less on months it never saw; B = up to 50%; "
      "C = more - roll up before reading",
      10, None, "center"),
+    ("capacity_potential_p75",
+     "if every provider here delivered like the busiest quarter of their local peers",
+     14, "#,##0", "right"),
     ("pct_medicare_age_members",
      "share of the county's members aged 65 and above, December 2025",
      12, "0.0%", "right"),
-    ("avg_hcc_conditions_per_member",
-     "average number of chronic conditions per member in this county; higher = sicker "
-     "members = same shortage hurts more; counts main-diagnosis conditions only, so it "
-     "understates",
-     13, "0.00", "right"),
+    ("demand_rate_estimate",
+     "old formula: current members times historical visit rates; tied to no calendar year; "
+     "context only",
+     14, "#,##0", "right"),
     ("market_max_demand",
      "ceiling - every Medicare-eligible in the county, not just our members; "
      "context only, in no gap",
      14, "#,##0", "right"),
+]
+
+GAP_BLOCKS = [
+    ("ID", 1, 4, WHITE),
+    ("ACTUAL", 5, 7, LIGHT_GREEN),
+    ("ESTIMATE 2026", 8, 12, LIGHT_BLUE),
+    ("COMPLIANCE", 13, 13, COMPLIANCE_RED),
+    ("MODEL QUALITY", 14, 15, GREY),
+    ("CONTEXT", 16, 19, LIGHT_GOLD),
 ]
 
 
@@ -363,7 +375,13 @@ def build_gap(wb, weave):
     ws = wb.create_sheet("Gap 2026")
     title(ws, "Gap 2026", "one row per county x cms_specialty from dc2_weave",
           ncols=len(GAP_COLS))
-    hdr = derived_table(ws, weave, GAP_COLS, 4)
+    block_row = 4
+    for tag, c0, c1, bg in GAP_BLOCKS:
+        ws.merge_cells(f"{get_column_letter(c0)}{block_row}:{get_column_letter(c1)}{block_row}")
+        cell(ws, f"{get_column_letter(c0)}{block_row}", tag, bold=True, size=9,
+             bg=bg, h_align="center", bdr=True)
+    ws.row_dimensions[block_row].height = 18
+    hdr = derived_table(ws, weave, GAP_COLS, 5)
     keys = [k for k, *_ in GAP_COLS]
     gap_col = get_column_letter(keys.index("gap_model_2026") + 1)
     rng = f"{gap_col}{hdr + 1}:{gap_col}{hdr + len(weave)}"
@@ -376,6 +394,11 @@ def build_gap(wb, weave):
     for value, hx in (("A", LIGHT_GREEN), ("B", LIGHT_GOLD), ("C", LIGHT_RED)):
         ws.conditional_formatting.add(
             brng, CellIsRule(operator="equal", formula=[f'"{value}"'], fill=fill(hx)))
+    comp_col = get_column_letter(keys.index("compliance_status") + 1)
+    crng = f"{comp_col}{hdr + 1}:{comp_col}{hdr + len(weave)}"
+    ws.conditional_formatting.add(
+        crng, CellIsRule(operator="equal", formula=['"NON-COMPLIANT"'],
+                         font=Font(name="Arial", color="C00000")))
     return len(weave)
 
 
@@ -387,12 +410,11 @@ ANSWER_COLS = [
     ("cms_specialty", 24, None, "left"),
     ("demand_next_12m_xgb", 14, "#,##0", "right"),
     ("capacity_next_12m_bottom_up", 15, "#,##0", "right"),
+    ("gap_2025_actual", 13, "#,##0", "right"),
     ("gap_model_2026", 13, "#,##0", "right"),
     ("capacity_to_demand_ratio", 12, "0.00", "right"),
-    ("gap_current_book", 13, "#,##0", "right"),
     ("expected_error_band", 10, None, "center"),
 ]
-SICK_COLS = ANSWER_COLS + [("avg_hcc_conditions_per_member", 13, "0.00", "right")]
 
 
 def _answer_table(ws, df, r0, cols=None):
@@ -447,28 +469,30 @@ def build_answers(wb, weave):
 
     r = section_header(ws, r, 1, len(ANSWER_COLS), "WATCH LIST")
     ws.merge_cells(f"A{r}:{get_column_letter(len(ANSWER_COLS))}{r}")
-    cell(ws, f"A{r}", "Rows where gap_current_book and gap_model_2026 disagree in sign: the "
-                      "current method and the model see different directions - these need "
-                      "human eyes. Band C rows are excluded here and appear in the master tab.",
+    cell(ws, f"A{r}", "Rows where gap_2025_actual and gap_model_2026 disagree in sign: what "
+                      "really happened last year and what the model expects point in "
+                      "different directions - these need human eyes. Band C rows are "
+                      "excluded here and appear in the master tab.",
          italic=True, size=9, color=DARK_GREY)
     r += 1
-    watch = ab[ab["gap_model_2026"].notna() & ab["gap_current_book"].notna()
-               & (np.sign(ab["gap_model_2026"]) != np.sign(ab["gap_current_book"]))]
+    watch = ab[ab["gap_model_2026"].notna() & ab["gap_2025_actual"].notna()
+               & (np.sign(ab["gap_model_2026"]) != np.sign(ab["gap_2025_actual"]))]
     r = _answer_table(ws, watch, r)
 
-    r = section_header(ws, r, 1, len(SICK_COLS), "SHORTAGES RANKED BY MEMBER SICKNESS")
-    ws.merge_cells(f"A{r}:{get_column_letter(len(SICK_COLS))}{r}")
-    q75 = weave.drop_duplicates("county_fips")["avg_hcc_conditions_per_member"].quantile(0.75)
-    cell(ws, f"A{r}", "Top 25 by gap_model_2026 among counties in the top quarter of "
-                      "avg_hcc_conditions_per_member (cut at the 75th percentile of county "
-                      "values). Bands A and B only.", italic=True, size=9, color=DARK_GREY)
+    r = section_header(ws, r, 1, len(ANSWER_COLS), "NON-COMPLIANT AND SHORT")
+    ws.merge_cells(f"A{r}:{get_column_letter(len(ANSWER_COLS))}{r}")
+    cell(ws, f"A{r}", "Rows failing the CMS minimum-provider rules AND showing a modeled "
+                      "2026 shortage, ranked by gap_model_2026. All error bands shown - "
+                      "check the band column before trusting an individual number.",
+         italic=True, size=9, color=DARK_GREY)
     r += 1
-    sick = ab[ab["gap_model_2026"].notna()
-              & (ab["avg_hcc_conditions_per_member"] >= q75)].sort_values(
-        "gap_model_2026", ascending=False).head(25)
-    r = _answer_table(ws, sick, r, cols=SICK_COLS)
+    nc_short = weave[(weave["compliance_status"] == "NON-COMPLIANT")
+                     & weave["gap_model_2026"].notna()
+                     & (weave["gap_model_2026"] > 0)].sort_values(
+        "gap_model_2026", ascending=False)
+    r = _answer_table(ws, nc_short, r)
     ws.freeze_panes = "A4"
-    return len(short) + len(excess) + len(watch) + len(sick)
+    return len(short) + len(excess) + len(watch) + len(nc_short)
 
 
 # ---------- tab 4: Demand Inputs ----------
@@ -598,25 +622,24 @@ def build_worked_examples(wb, d):
 
 # ---------- tab 7: Data Dictionary ----------
 DICT_ROWS = [
-    ("state_cd", "state code of the county", "dc2_baselines (from the v1 gap table)", "stored"),
+    ("state_cd", "state code of the county", "ref_county via normalization", "stored"),
     ("county_fips", "county code; the join key of the table (all sides normalized through ref_county)", "ref_county", "derived"),
     ("county_name", "county name, for display", "ref_county", "stored"),
     ("cms_specialty", "CMS specialty name after the one-time bridge from claims specialty codes", "ref_specialty_crosswalk", "stored"),
-    ("demand_current_book", "current-method demand rebuilt for enrolled members aged 60+", "dc2_baselines", "derived"),
-    ("capacity_current", "current-method capacity carried verbatim from the v1 pipeline", "dc2_baselines", "stored"),
-    ("gap_current_book", "demand_current_book minus capacity_current; positive = shortage", "dc2_baselines", "derived"),
     ("demand_visits_2025_actual", "visits that actually happened in 2025, member-county view; late-year claims may still be arriving", "dc2_demand_base", "derived"),
-    ("demand_next_12m_xgb", "model estimate of visits the county's members will need in 2026", "dc2_demand_predictions (future rows)", "derived"),
     ("capacity_visits_2025_actual", "visits that actually happened in 2025, provider-county view; late-year claims may still be arriving", "dc2_capacity_county", "derived"),
+    ("gap_2025_actual", "real 2025 visits: demand minus capacity; cross-county patient flow makes this nonzero", "computed in 55_weave.py", "derived"),
+    ("demand_next_12m_xgb", "model estimate of visits the county's members will need in 2026", "dc2_demand_predictions (future rows)", "derived"),
     ("capacity_next_12m_bottom_up", "sum of per-provider model estimates of visits delivered in 2026", "dc2_capacity_predictions (future rows)", "derived"),
     ("gap_model_2026", "demand_next_12m_xgb minus capacity_next_12m_bottom_up; positive = shortage", "computed in 55_weave.py", "derived"),
-    ("capacity_to_demand_ratio", "capacity divided by demand; 1.0 = exactly enough", "computed in 55_weave.py", "derived"),
-    ("capacity_potential_p75", "75th percentile of local per-provider 2026 estimates times the provider count", "dc2_capacity_provider_future", "derived"),
     ("gap_status", "UNDER where gap_model_2026 is positive, OVER otherwise; empty where a side is missing", "computed in 55_weave.py", "derived"),
+    ("capacity_to_demand_ratio", "capacity divided by demand; 1.0 = exactly enough", "computed in 55_weave.py", "derived"),
+    ("compliance_status", "pass or fail against the CMS minimum-provider rules; failed if any plan type fails", "fact_gap_analysis (collapsed over plan types)", "derived"),
     ("expected_error_pct", "measured average percent miss of the demand model on unseen 2025 months, per county", "dc2_demand_predictions (validation rows)", "derived"),
     ("expected_error_band", "A at 25% or less, B up to 50%, C above or unmeasured", "computed in 55_weave.py", "derived"),
+    ("capacity_potential_p75", "75th percentile of local per-provider 2026 estimates times the provider count", "dc2_capacity_provider_future", "derived"),
     ("pct_medicare_age_members", "December 2025 members aged 65+ over all members", "A870800_medicare_analysis_membership", "derived"),
-    ("avg_hcc_conditions_per_member", "December 2025 average chronic conditions per member; main-diagnosis only, so it understates", "dc2_demand_chronic", "derived"),
+    ("demand_rate_estimate", "old formula: current members times historical visit rates; tied to no calendar year; context only", "dc2_baselines (renamed from demand_current_book)", "stored"),
     ("market_max_demand", "eligibles-based demand ceiling, context only, in no gap", "dc2_baselines (from the v1 gap table)", "stored"),
 ]
 
@@ -652,11 +675,11 @@ def build_methodology(wb):
            "history: how many members they saw, the ages and conditions of those members, "
            "how many were new to them, and how long the provider has been in our data. Its "
            "per-provider 2026 estimates are added up to the county level.", h=64)
-    r = kv(ws, r, "The current-method columns",
-           "demand_current_book, capacity_current and gap_current_book carry the earlier "
-           "method, rebuilt on the same population as the models (enrolled members aged 60 "
-           "and above) so the comparison is fair. market_max_demand is the eligibles-based "
-           "ceiling and enters no gap.", h=52)
+    r = kv(ws, r, "The old-formula column",
+           "demand_rate_estimate carries the earlier method's demand estimate (current "
+           "members times historical visit rates, tied to no calendar year). "
+           "market_max_demand is the eligibles-based ceiling. Both are context only and "
+           "enter no gap.", h=52)
     r = kv(ws, r, "The gap and the ratio",
            "gap_model_2026 = demand estimate minus capacity estimate for the same county and "
            "specialty; positive means members are expected to need more visits than the "
@@ -669,14 +692,12 @@ def build_methodology(wb):
     r = kv(ws, r, "The 2025 actuals",
            "demand_visits_2025_actual and capacity_visits_2025_actual are the visits that "
            "really happened in 2025, shown beside the 2026 estimates so every prediction "
-           "can be compared with last year. Late-year claims may still be arriving, so "
-           "these can slightly undercount.", h=52)
-    r = kv(ws, r, "Conditions per member",
-           "avg_hcc_conditions_per_member is the average number of chronic conditions per "
-           "member in the county. It is used instead of the official CMS risk score "
-           "because our data carries each visit's main diagnosis only, which would make "
-           "the official score read low; the official score can be added later as its own "
-           "module.", h=64)
+           "can be compared with last year. gap_2025_actual is their difference. Late-year "
+           "claims may still be arriving, so these can slightly undercount.", h=52)
+    r = kv(ws, r, "Compliance and the gap",
+           "Compliance columns reflect the CMS minimum-provider rules; the gap columns show "
+           "whether the network actually has enough visit capacity - a county can be "
+           "compliant and still short.", h=40)
     r = kv(ws, r, "Model quality, measured",
            "The demand annual model missed by about 655 visits per county-specialty on "
            "average on unseen months. The capacity model missed by about 18 percent in "

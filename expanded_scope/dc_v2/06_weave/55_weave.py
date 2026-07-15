@@ -24,12 +24,17 @@ WHAT  : Joins the 2026 model estimates (future rows, feature month 2025-12)
         B <= 0.50, C otherwise (C with NULL pct where no qualifying rows).
         pct_medicare_age_members: December 2025 members 65+ over ALL
         members (no age filter on the denominator).
-        avg_hcc_conditions_per_member: December 2025, SAFE
-        SUM(members_with_hcc) over county members.
+        gap_2025_actual = demand_visits_2025_actual minus
+        capacity_visits_2025_actual (pandas, NaN-tolerant).
+        compliance_status: from cfg.table("fact_gap_analysis"), collapsed
+        over plan_type (NON-COMPLIANT if ANY plan row is NON-COMPLIANT),
+        LEFT joined on state_cd + county_fips + cms_specialty (unmatched =
+        NULL). demand_rate_estimate is the renamed demand_current_book
+        (values unchanged). EXACTLY 19 output columns.
 GRAIN : state_cd x county_fips x cms_specialty.
 INPUTS: dc2_demand_predictions, dc2_capacity_predictions,
         dc2_capacity_provider_future, dc2_baselines, dc2_demand_base,
-        dc2_capacity_county, dc2_demand_chronic,
+        dc2_capacity_county, cfg.table("fact_gap_analysis"),
         cfg.base("ref_specialty_crosswalk"), cfg.table("ref_county"),
         A870800_medicare_analysis_membership
 OUTPUT: dc2_weave (BigQuery table) with sanity prints.
@@ -69,7 +74,7 @@ PROV_FUT  = cfg.src("dc2_capacity_provider_future")
 BASELINES = cfg.src("dc2_baselines")
 DEM_BASE  = cfg.src("dc2_demand_base")
 CAP_CNTY  = cfg.src("dc2_capacity_county")
-DEM_CHR   = cfg.src("dc2_demand_chronic")
+FACT      = cfg.table("fact_gap_analysis")
 XWALK     = cfg.base("ref_specialty_crosswalk")
 REF_CTY   = cfg.table("ref_county")
 MBRSHP    = "anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_analysis_membership"
@@ -78,14 +83,14 @@ OUT_TBL   = cfg.src("dc2_weave")
 FOOTPRINT = ("FL", "OH", "AZ", "IL")
 
 OUT_COLS = ["state_cd", "county_fips", "county_name", "cms_specialty",
-            "demand_current_book", "capacity_current", "gap_current_book",
-            "demand_visits_2025_actual", "demand_next_12m_xgb",
-            "capacity_visits_2025_actual", "capacity_next_12m_bottom_up",
-            "gap_model_2026", "capacity_to_demand_ratio",
-            "capacity_potential_p75", "gap_status",
+            "demand_visits_2025_actual", "capacity_visits_2025_actual",
+            "gap_2025_actual",
+            "demand_next_12m_xgb", "capacity_next_12m_bottom_up",
+            "gap_model_2026", "gap_status", "capacity_to_demand_ratio",
+            "compliance_status",
             "expected_error_pct", "expected_error_band",
-            "pct_medicare_age_members", "avg_hcc_conditions_per_member",
-            "market_max_demand"]
+            "capacity_potential_p75", "pct_medicare_age_members",
+            "demand_rate_estimate", "market_max_demand"]
 
 CTY_KEYS = ["state_cd", "county_fips"]
 
@@ -158,9 +163,10 @@ def main():
     cap_act = q(f"SELECT prvdr_county, specialty_ctg_cd, "
                 f"SUM(visits) AS capacity_visits_2025_actual "
                 f"FROM `{CAP_CNTY}` WHERE year = 2025 GROUP BY 1, 2")
-    hcc = q(f"SELECT mbr_county_cd, "
-            f"SAFE_DIVIDE(SUM(members_with_hcc), MAX(members)) AS avg_hcc_conditions_per_member "
-            f"FROM `{DEM_CHR}` WHERE month = DATE '2025-12-01' GROUP BY 1")
+    comp = q(f"SELECT state_cd, county_fips, cms_specialty, "
+             f"IF(COUNTIF(compliance_status = 'NON-COMPLIANT') > 0, "
+             f"'NON-COMPLIANT', 'COMPLIANT') AS compliance_status "
+             f"FROM `{FACT}` GROUP BY 1, 2, 3")
     err = q(f"SELECT mbr_county_cd, "
             f"AVG(SAFE_DIVIDE(ABS(pred_next_1m_xgb - actual_next_1m), actual_next_1m)) "
             f"AS expected_error_pct "
@@ -177,7 +183,6 @@ def main():
     prov_fut = norm_provider_county(prov_fut, ref, "prvdr_county", "provider future")
     dem_act = norm_member_county(dem_act, ref, "mbr_county_cd", "demand 2025 actuals")
     cap_act = norm_provider_county(cap_act, ref, "prvdr_county", "capacity 2025 actuals")
-    hcc = norm_member_county(hcc, ref, "mbr_county_cd", "hcc conditions")
     err = norm_member_county(err, ref, "mbr_county_cd", "expected error")
     age_mix = norm_member_county(age_mix, ref, "mbr_county_cd", "age mix")
 
@@ -188,8 +193,7 @@ def main():
 
     weave = dem_b.merge(cap_b, on=CTY_KEYS + ["cms_specialty"], how="outer")
     weave = weave.merge(base[["state_cd", "county_fips", "cms_specialty",
-                              "demand_current_book", "capacity_current",
-                              "gap_current_book", "market_max_demand"]],
+                              "demand_current_book", "market_max_demand"]],
                         on=CTY_KEYS + ["cms_specialty"], how="left")
     weave = weave.merge(dem_act_b, on=CTY_KEYS + ["cms_specialty"], how="left")
     weave = weave.merge(cap_act_b, on=CTY_KEYS + ["cms_specialty"], how="left")
@@ -207,7 +211,10 @@ def main():
     weave = weave.rename(columns={
         "pred_next_12m_xgb": "demand_next_12m_xgb",
         "bottom_up_next_12m": "capacity_next_12m_bottom_up",
+        "demand_current_book": "demand_rate_estimate",
     })
+    weave["gap_2025_actual"] = (weave["demand_visits_2025_actual"]
+                                - weave["capacity_visits_2025_actual"])
     weave["gap_model_2026"] = (weave["demand_next_12m_xgb"]
                                - weave["capacity_next_12m_bottom_up"])
     weave["capacity_to_demand_ratio"] = np.where(
@@ -226,8 +233,7 @@ def main():
 
     weave = weave.merge(age_mix[CTY_KEYS + ["pct_medicare_age_members"]],
                         on=CTY_KEYS, how="left")
-    weave = weave.merge(hcc[CTY_KEYS + ["avg_hcc_conditions_per_member"]],
-                        on=CTY_KEYS, how="left")
+    weave = weave.merge(comp, on=CTY_KEYS + ["cms_specialty"], how="left")
 
     name_map = ref.set_index("county_fips")["county_name"]
     weave["county_name"] = weave["county_fips"].map(name_map)
@@ -247,15 +253,14 @@ def main():
     print(weave["gap_status"].value_counts(dropna=False).to_string())
     print("expected_error_band counts:")
     print(weave["expected_error_band"].value_counts(dropna=False).to_string())
+    print("compliance_status counts (including NULL):")
+    print(weave["compliance_status"].value_counts(dropna=False).to_string())
     print("column population summary:")
     total = len(weave)
     print(f"{'column':<34}{'non_null':>12}{'pct':>8}")
     for c in OUT_COLS:
         nn = int(weave[c].notna().sum())
         print(f"{c:<34}{nn:>12,}{(nn / total if total else 0):>8.1%}")
-    h = weave["avg_hcc_conditions_per_member"]
-    print(f"avg_hcc_conditions_per_member min/avg/max: "
-          f"{h.min():.3f} / {h.mean():.3f} / {h.max():.3f}")
 
     from google.cloud import bigquery
     job_config = bigquery.LoadJobConfig(write_disposition="WRITE_TRUNCATE")
