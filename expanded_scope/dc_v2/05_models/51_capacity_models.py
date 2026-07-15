@@ -63,6 +63,7 @@ np.random.seed(42)
 PROV_TBL = cfg.src("dc2_capacity_provider")
 CNTY_TBL = cfg.src("dc2_capacity_county")
 OUT_TBL  = cfg.src("dc2_capacity_predictions")
+OUT_FUT  = cfg.src("dc2_capacity_provider_future")
 
 OUT_DIR = cfg.repo_path("expanded_scope", "dc_v2", "05_models")
 METRICS_CSV    = os.path.join(OUT_DIR, "51_capacity_metrics.csv")
@@ -213,7 +214,7 @@ def main():
     log(f"provider frame ready: {x_prov.shape[0]:,} x {x_prov.shape[1]:,}")
 
     prov_tasks = task_masks(prov["month"])
-    bu_frames = {}
+    bu_frames, future_frames = {}, {}
     for task, spec in prov_tasks.items():
         y = prov[spec["target"]].to_numpy(dtype="float32")
         y_ser = prov[spec["target"]].astype("float32")
@@ -238,6 +239,13 @@ def main():
                                  y_ser[val], scored_pred.reindex(val_idx),
                                  prov_band[val]))
 
+        log(f"collecting future-month provider scores, target {task}")
+        fut_mask = (prov["month"].iloc[score_idx] == FUTURE_MONTH).to_numpy()
+        fut = prov.iloc[score_idx[fut_mask]][
+            ["epdb_dw_prvdr_id", "specialty_ctg_cd", "prvdr_county", "month"]].copy()
+        fut[f"provider_pred_{task}"] = pred_scored[fut_mask]
+        future_frames[task] = fut
+
         log(f"aggregating provider predictions to county, target {task}")
         agg = (prov.loc[score_idx, KEYS].assign(pred=pred_scored)
                .groupby(KEYS, as_index=False, observed=True)["pred"].sum()
@@ -245,6 +253,29 @@ def main():
         bu_frames[task] = agg
         del pred_scored, scored_pred, agg
         gc.collect()
+
+    log("assembling provider-level future prediction table")
+    fut_keys = ["epdb_dw_prvdr_id", "specialty_ctg_cd", "prvdr_county", "month"]
+    prov_future = future_frames["next_1m"].merge(
+        future_frames["next_12m"], on=fut_keys, how="outer")
+    for c in ("epdb_dw_prvdr_id", "specialty_ctg_cd", "prvdr_county"):
+        prov_future[c] = prov_future[c].astype(str)
+    prov_future["month"] = pd.to_datetime(prov_future["month"]).dt.date
+    log(f"writing {len(prov_future):,} rows -> {OUT_FUT}")
+    from google.cloud import bigquery as _bq
+    cfg.client().load_table_from_dataframe(
+        prov_future, OUT_FUT,
+        job_config=_bq.LoadJobConfig(write_disposition="WRITE_TRUNCATE")).result()
+    log(f"provider future table written: {len(prov_future):,} rows")
+    fut_provider_total = float(prov_future["provider_pred_next_12m"].sum())
+    fut_county_total = float(
+        bu_frames["next_12m"].loc[
+            pd.to_datetime(bu_frames["next_12m"]["month"]) == FUTURE_MONTH,
+            "bottom_up_next_12m"].sum())
+    log(f"SUM(provider_pred_next_12m) future: {fut_provider_total:,.0f}  vs  "
+        f"county bottom_up_next_12m future total: {fut_county_total:,.0f} (must match)")
+    del future_frames, prov_future
+    gc.collect()
 
     log("freeing provider frame before county modeling")
     del prov, x_prov, prov_band, prov_tasks
