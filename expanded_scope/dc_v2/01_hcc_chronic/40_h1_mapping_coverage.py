@@ -17,7 +17,25 @@ OUTPUT: expanded_scope/dc_v2/01_hcc_chronic/h1_mapping_coverage_2024.csv
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
+def _expanded_scope_dir():
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        return os.path.dirname(os.path.dirname(here))
+    except NameError:
+        probe = os.getcwd()
+        for _ in range(6):
+            if os.path.isfile(os.path.join(probe, "config.py")):
+                return probe
+            cand = os.path.join(probe, "expanded_scope")
+            if os.path.isfile(os.path.join(cand, "config.py")):
+                return cand
+            probe = os.path.dirname(probe)
+        raise FileNotFoundError(
+            "config.py not found - run from the repo root or any folder inside it")
+
+
+sys.path.insert(0, _expanded_scope_dir())
 import config as cfg
 
 CLAIMS = "anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_analysis_2025_claims"
