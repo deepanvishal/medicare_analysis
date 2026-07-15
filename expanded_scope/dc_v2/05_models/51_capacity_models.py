@@ -168,6 +168,19 @@ def size_band(v):
     return "mid"
 
 
+def county_band_series(frame, county_2024, label):
+    """Band a frame's prvdr_county without touching its categorical dtype:
+    astype(str) on a temporary series so fillna(0) is legal."""
+    mapped = pd.Series(frame["prvdr_county"].astype(str)).map(county_2024)
+    n_unmatched = int(mapped.isna().sum())
+    log(f"{label}: {n_unmatched:,} rows whose county failed the 2024 visit map "
+        f"(banded as small)")
+    if n_unmatched:
+        log(f"{label}: sample unmatched county values: "
+            f"{frame.loc[mapped.isna().values, 'prvdr_county'].astype(str).drop_duplicates().head(5).tolist()}")
+    return mapped.fillna(0).map(size_band)
+
+
 def eval_rows(label_model, label_target, actual, pred, bands):
     ok = actual.notna()
     actual, pred, bands = actual[ok], pred[ok], bands[ok]
