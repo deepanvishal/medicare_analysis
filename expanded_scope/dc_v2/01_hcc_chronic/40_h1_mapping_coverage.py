@@ -158,8 +158,9 @@ def main():
 
     hit = client.query(SQL_HIT_RATE).result().to_dataframe()
     print()
-    print(hit.to_string(index=False))
-    print(f"hit_rate: {float(hit['hit_rate'].iloc[0]):.4f}")
+    print(f"claims_distinct_codes: {int(hit['claims_distinct_codes'].iloc[0]):,}")
+    print(f"found_in_map:          {int(hit['found_in_map'].iloc[0]):,}")
+    print(f"hit_rate:              {float(hit['hit_rate'].iloc[0]):.4f}")
 
     answer = input("Review the format check above. Type YES to continue to coverage "
                    "metrics, anything else to abort. ")
@@ -170,8 +171,20 @@ def main():
     df = client.query(SQL).result().to_dataframe()
     df["metric_name"] = df["metric_name"].astype(str)
     df = df.set_index("metric_name").loc[METRIC_ORDER].reset_index()
-    df.to_csv(OUT_CSV, index=False)
-    print(df.to_string(index=False))
+
+    def fmt_stdout(name, v):
+        v = float(v)
+        return f"{v:.4f}" if name.startswith("pct_") else f"{int(round(v)):,}"
+
+    def fmt_csv(name, v):
+        v = float(v)
+        return f"{v:.4f}" if name.startswith("pct_") else str(int(round(v)))
+
+    csv_df = df.copy()
+    csv_df["value"] = [fmt_csv(n, v) for n, v in zip(df["metric_name"], df["value"])]
+    csv_df.to_csv(OUT_CSV, index=False)
+    for _, row in df.iterrows():
+        print(f"{row['metric_name']:<28}{fmt_stdout(row['metric_name'], row['value']):>20}")
     print(f"wrote {OUT_CSV}")
 
 
