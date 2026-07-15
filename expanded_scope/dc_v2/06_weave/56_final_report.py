@@ -218,16 +218,17 @@ def load():
     d["we_prev_row"] = q(f"SELECT HCC_v24, members_with_hcc, members, prevalence "
                          f"FROM `{DEM_CHR}` WHERE mbr_county_cd = '{d['we_county']}' "
                          f"AND month = DATE '2024-12-01' ORDER BY prevalence DESC LIMIT 1")
+    we_fips = d["we_county"].zfill(5)
     d["we_gap_row"] = q(f"SELECT county_fips, cms_specialty, demand_next_12m_xgb, "
                         f"capacity_next_12m_bottom_up, gap_model_2026 FROM `{WEAVE}` "
-                        f"WHERE county_fips = '{d['we_county']}' AND cms_specialty IN "
+                        f"WHERE county_fips = '{we_fips}' AND cms_specialty IN "
                         f"(SELECT cms_specialty FROM `{XWALK}` WHERE aetna_cd = '{d['we_spec']}') "
                         f"AND gap_model_2026 IS NOT NULL "
                         f"ORDER BY ABS(gap_model_2026) DESC LIMIT 1")
     if d["we_gap_row"].empty:
         d["we_gap_row"] = q(f"SELECT county_fips, cms_specialty, demand_next_12m_xgb, "
                             f"capacity_next_12m_bottom_up, gap_model_2026 FROM `{WEAVE}` "
-                            f"WHERE county_fips = '{d['we_county']}' "
+                            f"WHERE county_fips = '{we_fips}' "
                             f"AND gap_model_2026 IS NOT NULL "
                             f"ORDER BY ABS(gap_model_2026) DESC LIMIT 1")
     return d
@@ -269,10 +270,36 @@ def build_overview(wb):
     return 0
 
 
+# ---------- tab: Coverage ----------
+def build_coverage(wb, weave):
+    ws = wb.create_sheet("Coverage")
+    total = len(weave)
+    rows = [{"column": c,
+             "populated_count": int(weave[c].notna().sum()),
+             "populated_pct": (float(weave[c].notna().sum()) / total if total else 0.0)}
+            for c in weave.columns]
+    df = pd.DataFrame(rows)
+    cols = [("column", "dc2_weave column name, verbatim", 32, None, "left"),
+            ("populated_count", "rows where this column has a value", 16, "#,##0", "right"),
+            ("populated_pct", "share of all rows with a value; low = a join failed upstream",
+             14, "0.0%", "right")]
+    title(ws, "Coverage", f"join diagnosis: {total:,} total rows in dc2_weave",
+          ncols=len(cols))
+    hdr = derived_table(ws, df, cols, 4)
+    pct_col = get_column_letter(3)
+    rng = f"{pct_col}{hdr + 1}:{pct_col}{hdr + len(df)}"
+    ws.conditional_formatting.add(rng, CellIsRule(operator="lessThan", formula=["0.5"],
+                                                  fill=fill(LIGHT_RED), stopIfTrue=True))
+    ws.conditional_formatting.add(rng, CellIsRule(operator="lessThan", formula=["0.9"],
+                                                  fill=fill(LIGHT_GOLD)))
+    return len(df)
+
+
 # ---------- tab 2: Gap 2026 (master) ----------
 GAP_COLS = [
     ("state_cd", AS_STORED, 8, None, "left"),
     ("county_fips", AS_STORED, 11, None, "left"),
+    ("county_name", "county name from ref_county, for display", 16, None, "left"),
     ("cms_specialty", AS_STORED, 24, None, "left"),
     ("demand_current_book",
      "current-method demand for our enrolled members aged 60 and above",
@@ -283,8 +310,16 @@ GAP_COLS = [
     ("gap_current_book",
      "demand_current_book minus capacity_current; positive = shortage",
      13, "#,##0", "right"),
+    ("demand_visits_2025_actual",
+     "visits that actually happened in 2025 - context for the prediction beside it; "
+     "late-year claims may still be arriving, so this can slightly undercount",
+     14, "#,##0", "right"),
     ("demand_next_12m_xgb",
      "model estimate of visits members in this county will need in 2026",
+     14, "#,##0", "right"),
+    ("capacity_visits_2025_actual",
+     "visits that actually happened in 2025 - context for the prediction beside it; "
+     "late-year claims may still be arriving, so this can slightly undercount",
      14, "#,##0", "right"),
     ("capacity_next_12m_bottom_up",
      "sum of per-provider model estimates of visits providers here will deliver in 2026",
@@ -312,6 +347,11 @@ GAP_COLS = [
     ("pct_medicare_age_members",
      "share of the county's members aged 65 and above, December 2025",
      12, "0.0%", "right"),
+    ("avg_hcc_conditions_per_member",
+     "average number of chronic conditions per member in this county; higher = sicker "
+     "members = same shortage hurts more; counts main-diagnosis conditions only, so it "
+     "understates",
+     13, "0.00", "right"),
     ("market_max_demand",
      "ceiling - every Medicare-eligible in the county, not just our members; "
      "context only, in no gap",
@@ -343,6 +383,7 @@ def build_gap(wb, weave):
 ANSWER_COLS = [
     ("state_cd", 8, None, "left"),
     ("county_fips", 11, None, "left"),
+    ("county_name", 16, None, "left"),
     ("cms_specialty", 24, None, "left"),
     ("demand_next_12m_xgb", 14, "#,##0", "right"),
     ("capacity_next_12m_bottom_up", 15, "#,##0", "right"),
@@ -351,10 +392,12 @@ ANSWER_COLS = [
     ("gap_current_book", 13, "#,##0", "right"),
     ("expected_error_band", 10, None, "center"),
 ]
+SICK_COLS = ANSWER_COLS + [("avg_hcc_conditions_per_member", 13, "0.00", "right")]
 
 
-def _answer_table(ws, df, r0):
-    for i, (key, w, _, _) in enumerate(ANSWER_COLS):
+def _answer_table(ws, df, r0, cols=None):
+    cols = cols or ANSWER_COLS
+    for i, (key, w, _, _) in enumerate(cols):
         col = get_column_letter(i + 1)
         cell(ws, f"{col}{r0}", key, bold=True, color=WHITE, bg=DARK_BLUE, size=9,
              h_align="center", bdr=True)
@@ -362,7 +405,7 @@ def _answer_table(ws, df, r0):
     ws.row_dimensions[r0].height = 24
     for ridx, (_, row) in enumerate(df.iterrows(), start=r0 + 1):
         bg = GREY if ridx % 2 == 0 else WHITE
-        for i, (key, _, num, align) in enumerate(ANSWER_COLS):
+        for i, (key, _, num, align) in enumerate(cols):
             v = row.get(key)
             if hasattr(v, "item"):
                 v = v.item()
@@ -412,8 +455,20 @@ def build_answers(wb, weave):
     watch = ab[ab["gap_model_2026"].notna() & ab["gap_current_book"].notna()
                & (np.sign(ab["gap_model_2026"]) != np.sign(ab["gap_current_book"]))]
     r = _answer_table(ws, watch, r)
+
+    r = section_header(ws, r, 1, len(SICK_COLS), "SHORTAGES RANKED BY MEMBER SICKNESS")
+    ws.merge_cells(f"A{r}:{get_column_letter(len(SICK_COLS))}{r}")
+    q75 = weave.drop_duplicates("county_fips")["avg_hcc_conditions_per_member"].quantile(0.75)
+    cell(ws, f"A{r}", "Top 25 by gap_model_2026 among counties in the top quarter of "
+                      "avg_hcc_conditions_per_member (cut at the 75th percentile of county "
+                      "values). Bands A and B only.", italic=True, size=9, color=DARK_GREY)
+    r += 1
+    sick = ab[ab["gap_model_2026"].notna()
+              & (ab["avg_hcc_conditions_per_member"] >= q75)].sort_values(
+        "gap_model_2026", ascending=False).head(25)
+    r = _answer_table(ws, sick, r, cols=SICK_COLS)
     ws.freeze_panes = "A4"
-    return len(short) + len(excess) + len(watch)
+    return len(short) + len(excess) + len(watch) + len(sick)
 
 
 # ---------- tab 4: Demand Inputs ----------
@@ -544,12 +599,15 @@ def build_worked_examples(wb, d):
 # ---------- tab 7: Data Dictionary ----------
 DICT_ROWS = [
     ("state_cd", "state code of the county", "dc2_baselines (from the v1 gap table)", "stored"),
-    ("county_fips", "county code; the join key of the table", "dc2_weave inputs", "stored"),
+    ("county_fips", "county code; the join key of the table (all sides normalized through ref_county)", "ref_county", "derived"),
+    ("county_name", "county name, for display", "ref_county", "stored"),
     ("cms_specialty", "CMS specialty name after the one-time bridge from claims specialty codes", "ref_specialty_crosswalk", "stored"),
     ("demand_current_book", "current-method demand rebuilt for enrolled members aged 60+", "dc2_baselines", "derived"),
     ("capacity_current", "current-method capacity carried verbatim from the v1 pipeline", "dc2_baselines", "stored"),
     ("gap_current_book", "demand_current_book minus capacity_current; positive = shortage", "dc2_baselines", "derived"),
+    ("demand_visits_2025_actual", "visits that actually happened in 2025, member-county view; late-year claims may still be arriving", "dc2_demand_base", "derived"),
     ("demand_next_12m_xgb", "model estimate of visits the county's members will need in 2026", "dc2_demand_predictions (future rows)", "derived"),
+    ("capacity_visits_2025_actual", "visits that actually happened in 2025, provider-county view; late-year claims may still be arriving", "dc2_capacity_county", "derived"),
     ("capacity_next_12m_bottom_up", "sum of per-provider model estimates of visits delivered in 2026", "dc2_capacity_predictions (future rows)", "derived"),
     ("gap_model_2026", "demand_next_12m_xgb minus capacity_next_12m_bottom_up; positive = shortage", "computed in 55_weave.py", "derived"),
     ("capacity_to_demand_ratio", "capacity divided by demand; 1.0 = exactly enough", "computed in 55_weave.py", "derived"),
@@ -558,6 +616,7 @@ DICT_ROWS = [
     ("expected_error_pct", "measured average percent miss of the demand model on unseen 2025 months, per county", "dc2_demand_predictions (validation rows)", "derived"),
     ("expected_error_band", "A at 25% or less, B up to 50%, C above or unmeasured", "computed in 55_weave.py", "derived"),
     ("pct_medicare_age_members", "December 2025 members aged 65+ over all members", "A870800_medicare_analysis_membership", "derived"),
+    ("avg_hcc_conditions_per_member", "December 2025 average chronic conditions per member; main-diagnosis only, so it understates", "dc2_demand_chronic", "derived"),
     ("market_max_demand", "eligibles-based demand ceiling, context only, in no gap", "dc2_baselines (from the v1 gap table)", "stored"),
 ]
 
@@ -607,6 +666,17 @@ def build_methodology(wb):
            "Measured on 2025 months the model never trained on: the average percent miss per "
            "county. A means 25 percent or less, B up to 50 percent, C more than that or too "
            "little history to measure. C rows should be read only in rollups.", h=52)
+    r = kv(ws, r, "The 2025 actuals",
+           "demand_visits_2025_actual and capacity_visits_2025_actual are the visits that "
+           "really happened in 2025, shown beside the 2026 estimates so every prediction "
+           "can be compared with last year. Late-year claims may still be arriving, so "
+           "these can slightly undercount.", h=52)
+    r = kv(ws, r, "Conditions per member",
+           "avg_hcc_conditions_per_member is the average number of chronic conditions per "
+           "member in the county. It is used instead of the official CMS risk score "
+           "because our data carries each visit's main diagnosis only, which would make "
+           "the official score read low; the official score can be added later as its own "
+           "module.", h=64)
     r = kv(ws, r, "Model quality, measured",
            "The demand annual model missed by about 655 visits per county-specialty on "
            "average on unseen months. The capacity model missed by about 18 percent in "
@@ -637,6 +707,7 @@ def main():
     wb.remove(wb.active)
     counts = {}
     counts["Overview"] = build_overview(wb)
+    counts["Coverage"] = build_coverage(wb, d["weave"])
     counts["Gap 2026"] = build_gap(wb, d["weave"])
     counts["Answers"] = build_answers(wb, d["weave"])
     counts["Demand Inputs"] = build_demand_inputs(wb, d)

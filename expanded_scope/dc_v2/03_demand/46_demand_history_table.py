@@ -4,7 +4,8 @@
 WHAT  : Builds the two demand-side history tables. Visits attributed to the
         MEMBER's county (mbr_county_cd - never prvdr_county). A visit = one
         distinct member_id x epdb_dw_prvdr_id x srv_start_dt. Footprint
-        filter: mbr_submarket IS NOT NULL. Months in 2023 are lookback
+        filter: member county in FL/OH/AZ/IL via ref_county (see FOOTPRINT
+        below). Months in 2023 are lookback
         memory only (new-patient 12m window, chronic 24m window).
         New patient in month M = the member x provider pair has no visit in
         the 12 months before M. Dx join:
@@ -12,6 +13,8 @@ WHAT  : Builds the two demand-side history tables. Visits attributed to the
         UPPER(TRIM(diagnosis_code)); mapped means HCC_v24 IS NOT NULL.
 SCOPE : CP and ME members aged 60+; under-60 members and their claims are
         excluded from every number in this table.
+FOOTPRINT: member county restricted to FL/OH/AZ/IL via ref_county; submarket
+        no longer used as the scope filter.
 GRAIN : dc2_demand_base    -> mbr_county_cd x specialty_ctg_cd x month
                               (month DATE, first of month; 2024-2025)
         dc2_demand_chronic -> mbr_county_cd x month x HCC_v24 (2024-2025)
@@ -50,6 +53,10 @@ import config as cfg
 CLAIMS = "anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_analysis_2025_claims"
 MBRSHP = "anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_analysis_membership"
 MAP    = "anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.HCC_ICD_Mapping_2025"
+CTY    = cfg.table("ref_county")
+
+FOOTPRINT_JOIN = "LPAD(TRIM(CAST({alias}.mbr_county_cd AS STRING)), 5, '0') = rc.county_fips"
+FOOTPRINT_STATES = "('FL', 'OH', 'AZ', 'IL')"
 
 OUT_BASE    = cfg.src("dc2_demand_base")
 OUT_CHRONIC = cfg.src("dc2_demand_chronic")
@@ -59,17 +66,19 @@ VISIT_KEY = ("CONCAT(CAST(c.member_id AS STRING), '|', CAST(c.epdb_dw_prvdr_id A
 
 MEMBER_COUNTS = f"""
   SELECT
-    mbr_county_cd,
-    DATE(CAST(eff_yr AS INT64), CAST(eff_mo AS INT64), 1) AS month,
-    COUNT(DISTINCT member_id)                                        AS members,
-    COUNT(DISTINCT IF(age_nbr BETWEEN 60 AND 64, member_id, NULL))   AS mbr_age_60_64,
-    COUNT(DISTINCT IF(age_nbr BETWEEN 65 AND 74, member_id, NULL))   AS mbr_age_65_74,
-    COUNT(DISTINCT IF(age_nbr BETWEEN 75 AND 84, member_id, NULL))   AS mbr_age_75_84,
-    COUNT(DISTINCT IF(age_nbr >= 85, member_id, NULL))               AS mbr_age_85p
-  FROM `{MBRSHP}`
-  WHERE mbr_submarket IS NOT NULL
-    AND age_nbr >= 60
-    AND CAST(eff_yr AS INT64) IN (2024, 2025)
+    m.mbr_county_cd,
+    DATE(CAST(m.eff_yr AS INT64), CAST(m.eff_mo AS INT64), 1) AS month,
+    COUNT(DISTINCT m.member_id)                                        AS members,
+    COUNT(DISTINCT IF(m.age_nbr BETWEEN 60 AND 64, m.member_id, NULL)) AS mbr_age_60_64,
+    COUNT(DISTINCT IF(m.age_nbr BETWEEN 65 AND 74, m.member_id, NULL)) AS mbr_age_65_74,
+    COUNT(DISTINCT IF(m.age_nbr BETWEEN 75 AND 84, m.member_id, NULL)) AS mbr_age_75_84,
+    COUNT(DISTINCT IF(m.age_nbr >= 85, m.member_id, NULL))             AS mbr_age_85p
+  FROM `{MBRSHP}` m
+  JOIN `{CTY}` rc
+    ON {FOOTPRINT_JOIN.format(alias='m')}
+  WHERE rc.state_cd IN {FOOTPRINT_STATES}
+    AND m.age_nbr >= 60
+    AND CAST(m.eff_yr AS INT64) IN (2024, 2025)
   GROUP BY 1, 2
 """
 
@@ -79,15 +88,17 @@ OPTIONS (labels=[("owner", "deepan_thulasi_aetna_com")])
 AS
 WITH claims_f AS (
   SELECT
-    member_id,
-    epdb_dw_prvdr_id,
-    srv_start_dt,
-    DATE_TRUNC(srv_start_dt, MONTH) AS month,
-    mbr_county_cd,
-    specialty_ctg_cd
-  FROM `{CLAIMS}`
-  WHERE mbr_submarket IS NOT NULL
-    AND age_nbr >= 60
+    c.member_id,
+    c.epdb_dw_prvdr_id,
+    c.srv_start_dt,
+    DATE_TRUNC(c.srv_start_dt, MONTH) AS month,
+    c.mbr_county_cd,
+    c.specialty_ctg_cd
+  FROM `{CLAIMS}` c
+  JOIN `{CTY}` rc
+    ON {FOOTPRINT_JOIN.format(alias='c')}
+  WHERE rc.state_cd IN {FOOTPRINT_STATES}
+    AND c.age_nbr >= 60
 ),
 pair_months AS (
   SELECT DISTINCT member_id, epdb_dw_prvdr_id, month
@@ -179,9 +190,11 @@ WITH mapped_claims AS (
     DATE_TRUNC(c.srv_start_dt, MONTH) AS claim_month,
     h.HCC_v24
   FROM `{CLAIMS}` c
+  JOIN `{CTY}` rc
+    ON {FOOTPRINT_JOIN.format(alias='c')}
   JOIN `{MAP}` h
     ON UPPER(REPLACE(TRIM(c.pri_icd9_dx_cd), '.', '')) = UPPER(TRIM(h.diagnosis_code))
-  WHERE c.mbr_submarket IS NOT NULL
+  WHERE rc.state_cd IN {FOOTPRINT_STATES}
     AND c.age_nbr >= 60
     AND h.HCC_v24 IS NOT NULL
 ),
@@ -223,12 +236,13 @@ CHECKS_BASE = {
     "total visits 2024 in table 1":
         f"SELECT SUM(visits) AS table_visits_2024 FROM `{OUT_BASE}` WHERE year = 2024",
     "distinct-visit count 2024 direct from claims (must match line above)":
-        f"SELECT COUNT(DISTINCT CONCAT(CAST(mbr_county_cd AS STRING), '|', "
-        f"CAST(specialty_ctg_cd AS STRING), '|', CAST(member_id AS STRING), '|', "
-        f"CAST(epdb_dw_prvdr_id AS STRING), '|', CAST(srv_start_dt AS STRING))) "
-        f"AS direct_visits_2024 FROM `{CLAIMS}` "
-        f"WHERE mbr_submarket IS NOT NULL AND age_nbr >= 60 "
-        f"AND EXTRACT(YEAR FROM srv_start_dt) = 2024",
+        f"SELECT COUNT(DISTINCT CONCAT(CAST(c.mbr_county_cd AS STRING), '|', "
+        f"CAST(c.specialty_ctg_cd AS STRING), '|', CAST(c.member_id AS STRING), '|', "
+        f"CAST(c.epdb_dw_prvdr_id AS STRING), '|', CAST(c.srv_start_dt AS STRING))) "
+        f"AS direct_visits_2024 FROM `{CLAIMS}` c "
+        f"JOIN `{CTY}` rc ON {FOOTPRINT_JOIN.format(alias='c')} "
+        f"WHERE rc.state_cd IN {FOOTPRINT_STATES} AND c.age_nbr >= 60 "
+        f"AND EXTRACT(YEAR FROM c.srv_start_dt) = 2024",
     "cells with pct_new_patients > 1 (must be 0)":
         f"SELECT COUNT(*) AS bad_cells FROM `{OUT_BASE}` WHERE pct_new_patients > 1",
 }

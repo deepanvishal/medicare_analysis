@@ -4,13 +4,16 @@
 WHAT  : Builds the two capacity-side history tables. Visits attributed to the
         PROVIDER's county (prvdr_county / prvdr_submarket - never
         mbr_county_cd). A visit = one distinct member_id x epdb_dw_prvdr_id
-        x srv_start_dt. Footprint filter: prvdr_submarket IS NOT NULL.
+        x srv_start_dt. Footprint filter: provider county in FL/OH/AZ/IL via
+        ref_county (see FOOTPRINT below).
         Months in 2023 are lookback memory only (new-patient 12m window,
         panel 12m window, chronic 24m window, tenure). Dx join:
         UPPER(REPLACE(TRIM(pri_icd9_dx_cd), '.', '')) =
         UPPER(TRIM(diagnosis_code)); mapped means HCC_v24 IS NOT NULL.
 SCOPE : CP and ME members aged 60+; under-60 members and their claims are
         excluded from every number in this table.
+FOOTPRINT: provider county restricted to FL/OH/AZ/IL via ref_county;
+        submarket no longer used as the scope filter.
 GRAIN : dc2_capacity_provider -> epdb_dw_prvdr_id x specialty_ctg_cd x month
                                  (month DATE, first of month; 2024-2025)
         dc2_capacity_county   -> prvdr_county x specialty_ctg_cd x month
@@ -54,6 +57,10 @@ MAP    = "anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.HCC_ICD_Mapping_2025"
 OUT_PROVIDER = cfg.src("dc2_capacity_provider")
 OUT_COUNTY   = cfg.src("dc2_capacity_county")
 DEMAND_BASE  = cfg.src("dc2_demand_base")
+CTY          = cfg.table("ref_county")
+
+FOOTPRINT_COUNTIES = (f"SELECT DISTINCT UPPER(county_name) AS county_name_u "
+                      f"FROM `{CTY}` WHERE state_cd IN ('FL', 'OH', 'AZ', 'IL')")
 
 VISIT_KEY = ("CONCAT(CAST(c.member_id AS STRING), '|', CAST(c.epdb_dw_prvdr_id AS STRING), "
              "'|', CAST(c.srv_start_dt AS STRING))")
@@ -62,20 +69,24 @@ DDL_PROVIDER = f"""
 CREATE OR REPLACE TABLE `{OUT_PROVIDER}`
 OPTIONS (labels=[("owner", "deepan_thulasi_aetna_com")])
 AS
-WITH claims_f AS (
+WITH footprint_counties AS (
+  {FOOTPRINT_COUNTIES}
+),
+claims_f AS (
   SELECT
-    member_id,
-    epdb_dw_prvdr_id,
-    srv_start_dt,
-    DATE_TRUNC(srv_start_dt, MONTH) AS month,
-    specialty_ctg_cd,
-    prvdr_county,
-    mbr_county_cd,
-    age_nbr,
-    pri_icd9_dx_cd
-  FROM `{CLAIMS}`
-  WHERE prvdr_submarket IS NOT NULL
-    AND age_nbr >= 60
+    c.member_id,
+    c.epdb_dw_prvdr_id,
+    c.srv_start_dt,
+    DATE_TRUNC(c.srv_start_dt, MONTH) AS month,
+    c.specialty_ctg_cd,
+    c.prvdr_county,
+    c.mbr_county_cd,
+    c.age_nbr,
+    c.pri_icd9_dx_cd
+  FROM `{CLAIMS}` c
+  JOIN footprint_counties fc
+    ON UPPER(TRIM(c.prvdr_county)) = fc.county_name_u
+  WHERE c.age_nbr >= 60
 ),
 pair_months AS (
   SELECT DISTINCT member_id, epdb_dw_prvdr_id, month
@@ -253,11 +264,14 @@ CHECKS_PROVIDER = {
     "row count dc2_capacity_provider":
         f"SELECT COUNT(*) AS row_count FROM `{OUT_PROVIDER}`",
     "rows where panel_members < distinct members visiting that month (must be 0)":
-        f"WITH monthly AS ("
-        f"  SELECT epdb_dw_prvdr_id, DATE_TRUNC(srv_start_dt, MONTH) AS month, "
-        f"  COUNT(DISTINCT member_id) AS month_members "
-        f"  FROM `{CLAIMS}` WHERE prvdr_submarket IS NOT NULL AND age_nbr >= 60 "
-        f"  AND EXTRACT(YEAR FROM srv_start_dt) IN (2024, 2025) GROUP BY 1, 2) "
+        f"WITH footprint_counties AS ({FOOTPRINT_COUNTIES}), "
+        f"monthly AS ("
+        f"  SELECT c.epdb_dw_prvdr_id, DATE_TRUNC(c.srv_start_dt, MONTH) AS month, "
+        f"  COUNT(DISTINCT c.member_id) AS month_members "
+        f"  FROM `{CLAIMS}` c "
+        f"  JOIN footprint_counties fc ON UPPER(TRIM(c.prvdr_county)) = fc.county_name_u "
+        f"  WHERE c.age_nbr >= 60 "
+        f"  AND EXTRACT(YEAR FROM c.srv_start_dt) IN (2024, 2025) GROUP BY 1, 2) "
         f"SELECT COUNT(*) AS bad_rows FROM ("
         f"  SELECT DISTINCT epdb_dw_prvdr_id, month, panel_members FROM `{OUT_PROVIDER}`) t "
         f"JOIN monthly m ON t.epdb_dw_prvdr_id = m.epdb_dw_prvdr_id AND t.month = m.month "
