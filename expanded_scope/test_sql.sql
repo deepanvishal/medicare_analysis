@@ -141,55 +141,50 @@ where m.medical_ind = 'Y'
 
 
 
-WITH v AS (
+WITH county_size AS (
+  SELECT prvdr_county, SUM(visits) AS v2024
+  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.dc2_capacity_county`
+  WHERE year = 2024
+  GROUP BY prvdr_county
+),
+base AS (
   SELECT
-    target,
-    county_size,
-    AVG(actual)                      AS avg_actual,
-    AVG(ABS(bottom_up - actual))     AS mae_bottom_up,
-    AVG(ABS(top_down  - actual))     AS mae_top_down_xgb,
-    COUNT(*)                         AS cells
-  FROM (
-    SELECT
-      'next_1m' AS target,
-      CASE WHEN county_2024_visits < 10000 THEN 'small'
-           WHEN county_2024_visits <= 100000 THEN 'mid'
-           ELSE 'large' END AS county_size,
-      actual_next_1m  AS actual,
-      bottom_up_next_1m AS bottom_up,
-      top_down_xgb_next_1m AS top_down
-    FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.dc2_capacity_predictions` p
-    JOIN (
-      SELECT prvdr_county AS cty, SUM(visits) AS county_2024_visits
-      FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.dc2_capacity_county`
-      WHERE year = 2024
-      GROUP BY 1
-    ) s ON p.prvdr_county = s.cty
-    WHERE split_label = 'validation'
-      AND actual_next_1m IS NOT NULL
-      AND bottom_up_next_1m IS NOT NULL
+    'next_1m' AS target,
+    CASE WHEN s.v2024 < 10000 THEN 'small'
+         WHEN s.v2024 <= 100000 THEN 'mid'
+         ELSE 'large' END AS band,
+    p.actual_next_1m       AS actual,
+    p.bottom_up_next_1m    AS bottom_up,
+    p.top_down_next_1m_xgb AS top_down
+  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.dc2_capacity_predictions` p
+  JOIN county_size s USING (prvdr_county)
+  WHERE p.split_label = 'validation'
+    AND p.actual_next_1m IS NOT NULL
+    AND p.bottom_up_next_1m IS NOT NULL
 
-    UNION ALL
+  UNION ALL
 
-    SELECT
-      'next_12m',
-      CASE WHEN county_2024_visits < 10000 THEN 'small'
-           WHEN county_2024_visits <= 100000 THEN 'mid'
-           ELSE 'large' END,
-      actual_next_12m,
-      bottom_up_next_12m,
-      top_down_xgb_next_12m
-    FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.dc2_capacity_predictions` p
-    JOIN (
-      SELECT prvdr_county AS cty, SUM(visits) AS county_2024_visits
-      FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.dc2_capacity_county`
-      WHERE year = 2024
-      GROUP BY 1
-    ) s ON p.prvdr_county = s.cty
-    WHERE month = DATE '2024-12'
-      AND actual_next_12m IS NOT NULL
-      AND bottom_up_next_12m IS NOT NULL
-  )
-  GROUP BY target, county_size
+  SELECT
+    'next_12m',
+    CASE WHEN s.v2024 < 10000 THEN 'small'
+         WHEN s.v2024 <= 100000 THEN 'mid'
+         ELSE 'large' END,
+    p.actual_next_12m,
+    p.bottom_up_next_12m,
+    p.top_down_next_12m_xgb
+  FROM `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.dc2_capacity_predictions` p
+  JOIN county_size s USING (prvdr_county)
+  WHERE p.month = DATE '2024-12'
+    AND p.actual_next_12m IS NOT NULL
+    AND p.bottom_up_next_12m IS NOT NULL
 )
-SELECT * FROM v ORDER BY target, county_size;
+SELECT
+  target,
+  band,
+  COUNT(*)                                    AS cells,
+  ROUND(AVG(actual), 1)                       AS avg_actual,
+  ROUND(AVG(ABS(bottom_up - actual)), 1)      AS mae_bottom_up,
+  ROUND(AVG(ABS(top_down - actual)), 1)       AS mae_top_down_xgb
+FROM base
+GROUP BY target, band
+ORDER BY target, band; v ORDER BY target, county_size;
