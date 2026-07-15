@@ -63,11 +63,12 @@ OUT_DIR = cfg.repo_path("expanded_scope", "dc_v2", "05_models")
 METRICS_CSV    = os.path.join(OUT_DIR, "50_demand_metrics.csv")
 IMPORTANCE_CSV = os.path.join(OUT_DIR, "50_demand_feature_importance.csv")
 
-NUM_FEATURES = ["members", "mbr_lt65", "mbr_65_74", "mbr_75_84", "mbr_85p",
+NUM_FEATURES = ["members", "mbr_age_60_64", "mbr_age_65_74", "mbr_age_75_84", "mbr_age_85p",
                 "pct_new_patients", "month_of_year", "year", "month_index"]
 CAT_FEATURES = ["mbr_county_cd", "specialty_ctg_cd"]
 
-COUNT_COLS    = ["visits", "members", "mbr_lt65", "mbr_65_74", "mbr_75_84", "mbr_85p"]
+COUNT_COLS    = ["visits", "members", "mbr_age_60_64", "mbr_age_65_74", "mbr_age_75_84",
+                 "mbr_age_85p"]
 TARGET_COLS   = ["target_next_1m", "target_next_12m"]
 CALENDAR_COLS = ["month_of_year", "year", "month_index"]
 

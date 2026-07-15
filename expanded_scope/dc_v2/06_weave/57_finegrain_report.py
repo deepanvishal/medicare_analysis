@@ -4,14 +4,15 @@
 WHAT  : Predictions at the lowest honest grain, each carrying an
         expected-error column measured from actual past performance (2025
         validation months the models never trained on) - not claimed,
-        measured. Error fallback: cell -> county -> trust band, recorded in
-        error_basis. House style copied from 13_build_report.py.
+        measured. Error fallback: exact cell -> county -> error band
+        (counties grouped by their own measured error level: A <= 0.25,
+        B <= 0.50, C otherwise or unmeasured), recorded in error_basis.
+        House style copied from 13_build_report.py.
 GRAIN : demand at mbr_county_cd x specialty_ctg_cd; capacity at
         prvdr_county x specialty_ctg_cd; provider tab at epdb_dw_prvdr_id x
         specialty_ctg_cd (top 5,000 by provider_pred_next_12m).
 INPUTS: dc2_demand_predictions, dc2_capacity_predictions,
-        dc2_capacity_provider_future, dc2_capacity_provider,
-        dc2_capacity_county
+        dc2_capacity_provider_future, dc2_capacity_provider
 OUTPUT: medicare_demand_capacity_finegrain.xlsx (repo root)
 Run   : python expanded_scope/dc_v2/06_weave/57_finegrain_report.py
 """
@@ -52,7 +53,6 @@ DEM_PRED = cfg.src("dc2_demand_predictions")
 CAP_PRED = cfg.src("dc2_capacity_predictions")
 PROV_FUT = cfg.src("dc2_capacity_provider_future")
 CAP_PROV = cfg.src("dc2_capacity_provider")
-CAP_CNTY = cfg.src("dc2_capacity_county")
 
 DARK_BLUE, MID_BLUE, LIGHT_BLUE = "1F3864", "2E75B6", "D6E4F0"
 GREY, DARK_GREY, WHITE = "F2F2F2", "595959", "FFFFFF"
@@ -150,17 +150,18 @@ def derived_table(ws, df, cols, r0, filters=True):
 AS_STORED = "as stored"
 
 
-def size_band(v):
-    if v < 10_000:
-        return "small"
-    if v > 100_000:
-        return "large"
-    return "mid"
+def error_band(mape):
+    if pd.isna(mape):
+        return "C"
+    if mape <= 0.25:
+        return "A"
+    if mape <= 0.50:
+        return "B"
+    return "C"
 
 
-def build_error_table(val, county_col, pred_col, actual_col, band_map):
-    """Per county x specialty error rates from validation rows, with
-    cell -> county -> band fallback recorded in error_basis."""
+def build_error_tables(val, county_col, pred_col, actual_col):
+    """cell / county / error-band error stats from validation rows."""
     val = val.copy()
     val["abs_err"] = (val[pred_col] - val[actual_col]).abs()
     val["ape"] = np.where(val[actual_col] >= 10,
@@ -174,19 +175,20 @@ def build_error_table(val, county_col, pred_col, actual_col, band_map):
         mae_county=("abs_err", "mean"),
         mape_county=("ape", "mean"),
         n_q_county=("ape", "count"))
-    val["band"] = val[county_col].map(band_map).fillna(0).map(size_band)
-    band_stats = val.groupby("band", as_index=False).agg(
-        mae_band=("abs_err", "mean"),
-        mape_band=("ape", "mean"))
+    county_stats["error_band"] = county_stats["mape_county"].map(error_band)
+    band_stats = (county_stats[county_stats["mape_county"].notna()]
+                  .groupby("error_band", as_index=False)
+                  .agg(mae_band=("mae_county", "mean"),
+                       mape_band=("mape_county", "mean")))
     return cell_stats, county_stats, band_stats
 
 
-def attach_errors(fut, county_col, cell_stats, county_stats, band_stats, band_map):
+def attach_errors(fut, county_col, cell_stats, county_stats, band_stats):
     keys = [county_col, "specialty_ctg_cd"]
     df = fut.merge(cell_stats, on=keys, how="left")
     df = df.merge(county_stats, on=county_col, how="left")
-    df["band"] = df[county_col].map(band_map).fillna(0).map(size_band)
-    df = df.merge(band_stats, on="band", how="left")
+    df["error_band"] = df["error_band"].fillna("C")
+    df = df.merge(band_stats, on="error_band", how="left")
     use_cell = df["n_q_cell"].fillna(0) > 0
     use_county = ~use_cell & (df["n_q_county"].fillna(0) > 0)
     df["error_basis"] = np.where(use_cell, "cell",
@@ -228,8 +230,6 @@ def load():
                    FROM `{CAP_PROV}` WHERE year = 2025 GROUP BY 1, 2) b
         ON a.epdb_dw_prvdr_id = b.epdb_dw_prvdr_id
         AND a.specialty_ctg_cd = b.specialty_ctg_cd""")
-    d["cnty_2024"] = q(f"SELECT prvdr_county, SUM(visits) AS visits_2024 "
-                       f"FROM `{CAP_CNTY}` WHERE year = 2024 GROUP BY 1")
     return d
 
 
@@ -243,7 +243,7 @@ DEM_COLS = [
     ("mape_hist", "average percent miss of this same model on 2025 months it did not train on, "
      "for this county and specialty", 13, "0.0%", "right"),
     ("error_basis", "where the error estimate comes from: this exact cell, this county overall, "
-     "or counties of similar size", 11, None, "center"),
+     "or counties with similar error levels", 11, None, "center"),
 ]
 
 CAP_COLS = [
@@ -256,7 +256,7 @@ CAP_COLS = [
     ("mape_hist", "average percent miss of this same model on 2025 months it did not train on, "
      "for this county and specialty", 13, "0.0%", "right"),
     ("error_basis", "where the error estimate comes from: this exact cell, this county overall, "
-     "or counties of similar size", 11, None, "center"),
+     "or counties with similar error levels", 11, None, "center"),
 ]
 
 PROV_COLS = [
@@ -273,31 +273,33 @@ PROV_COLS = [
      12, "0.0%", "right"),
     ("tenure_months", "months since the provider's first claim in the data", 11, "#,##0", "right"),
     ("visits_2025", "actual visits delivered in 2025", 11, "#,##0", "right"),
-    ("mape_hist", "county-size-band average percent miss; provider-level error was not "
-     "individually validated", 13, "0.0%", "right"),
-    ("error_basis", "always band: provider-level error was not individually validated",
-     11, None, "center"),
+    ("mape_hist", "county-level percent miss of the capacity model where available; "
+     "provider-level error was not individually validated", 13, "0.0%", "right"),
+    ("error_basis", "county where the county's own error was measured, otherwise band; "
+     "provider-level error was not individually validated", 11, None, "center"),
 ]
 
 
 def main():
     d = load()
-    band_map = d["cnty_2024"].set_index("prvdr_county")["visits_2024"]
 
-    dem_cell, dem_cnty, dem_band = build_error_table(
-        d["dem_val"], "mbr_county_cd", "pred_next_1m_xgb", "actual_next_1m", band_map)
-    dem = attach_errors(d["dem_fut"], "mbr_county_cd", dem_cell, dem_cnty, dem_band, band_map)
+    dem_cell, dem_cnty, dem_band = build_error_tables(
+        d["dem_val"], "mbr_county_cd", "pred_next_1m_xgb", "actual_next_1m")
+    dem = attach_errors(d["dem_fut"], "mbr_county_cd", dem_cell, dem_cnty, dem_band)
 
-    cap_cell, cap_cnty, cap_band = build_error_table(
-        d["cap_val"], "prvdr_county", "bottom_up_next_1m", "actual_next_1m", band_map)
-    cap = attach_errors(d["cap_fut"], "prvdr_county", cap_cell, cap_cnty, cap_band, band_map)
+    cap_cell, cap_cnty, cap_band = build_error_tables(
+        d["cap_val"], "prvdr_county", "bottom_up_next_1m", "actual_next_1m")
+    cap = attach_errors(d["cap_fut"], "prvdr_county", cap_cell, cap_cnty, cap_band)
 
     prov = d["prov_fut"].merge(d["prov_inputs"],
                                on=["epdb_dw_prvdr_id", "specialty_ctg_cd"], how="left")
-    prov["band"] = prov["prvdr_county"].map(band_map).fillna(0).map(size_band)
-    prov = prov.merge(cap_band.rename(columns={"mape_band": "mape_hist"})[["band", "mape_hist"]],
-                      on="band", how="left")
-    prov["error_basis"] = "band"
+    prov = prov.merge(cap_cnty[["prvdr_county", "mape_county", "n_q_county", "error_band"]],
+                      on="prvdr_county", how="left")
+    prov["error_band"] = prov["error_band"].fillna("C")
+    prov = prov.merge(cap_band, on="error_band", how="left")
+    has_cnty = prov["n_q_county"].fillna(0) > 0
+    prov["mape_hist"] = np.where(has_cnty, prov["mape_county"], prov["mape_band"])
+    prov["error_basis"] = np.where(has_cnty, "county", "band")
     prov = (prov.sort_values("provider_pred_next_12m", ascending=False)
             .head(5000).reset_index(drop=True))
 
@@ -336,10 +338,10 @@ def main():
            "Both numbers come from comparing the model's estimates against real 2025 months "
            "the model never trained on. They are the model's actual track record, not a "
            "promise.", h=40)
-    r = kv(ws, r, "Small counties",
-           "Small counties carry band-level error (error_basis = band) because their own "
-           "history is too thin to measure an error rate from; their number is borrowed "
-           "from counties of similar size.", h=40)
+    r = kv(ws, r, "Thin cells",
+           "Thin cells carry county- or band-level error because their own history is too "
+           "thin to measure an error rate from; band means counties with similar measured "
+           "error levels.", h=40)
     big = dem.sort_values("pred_next_12m_xgb", ascending=False).head(1)
     if len(big):
         b = big.iloc[0]
@@ -362,6 +364,8 @@ def main():
     print(dem["error_basis"].value_counts().to_string())
     print("capacity error_basis counts:")
     print(cap["error_basis"].value_counts().to_string())
+    print("provider error_basis counts:")
+    print(prov["error_basis"].value_counts().to_string())
 
 
 if __name__ == "__main__":

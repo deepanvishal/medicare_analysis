@@ -9,6 +9,8 @@ WHAT  : Builds the two capacity-side history tables. Visits attributed to the
         panel 12m window, chronic 24m window, tenure). Dx join:
         UPPER(REPLACE(TRIM(pri_icd9_dx_cd), '.', '')) =
         UPPER(TRIM(diagnosis_code)); mapped means HCC_v24 IS NOT NULL.
+SCOPE : CP and ME members aged 60+; under-60 members and their claims are
+        excluded from every number in this table.
 GRAIN : dc2_capacity_provider -> epdb_dw_prvdr_id x specialty_ctg_cd x month
                                  (month DATE, first of month; 2024-2025)
         dc2_capacity_county   -> prvdr_county x specialty_ctg_cd x month
@@ -73,6 +75,7 @@ WITH claims_f AS (
     pri_icd9_dx_cd
   FROM `{CLAIMS}`
   WHERE prvdr_submarket IS NOT NULL
+    AND age_nbr >= 60
 ),
 pair_months AS (
   SELECT DISTINCT member_id, epdb_dw_prvdr_id, month
@@ -174,7 +177,7 @@ panel_agg AS (
     pb.month,
     pb.epdb_dw_prvdr_id,
     COUNT(DISTINCT pb.member_id)                                        AS panel_members,
-    COUNT(DISTINCT IF(pb.age_w < 65, pb.member_id, NULL))               AS panel_lt65,
+    COUNT(DISTINCT IF(pb.age_w BETWEEN 60 AND 64, pb.member_id, NULL))  AS panel_60_64,
     COUNT(DISTINCT IF(pb.age_w BETWEEN 65 AND 74, pb.member_id, NULL))  AS panel_65_74,
     COUNT(DISTINCT IF(pb.age_w BETWEEN 75 AND 84, pb.member_id, NULL))  AS panel_75_84,
     COUNT(DISTINCT IF(pb.age_w >= 85, pb.member_id, NULL))              AS panel_85p,
@@ -198,7 +201,7 @@ SELECT
   t.target_next_1m,
   t.target_next_12m,
   p.panel_members,
-  p.panel_lt65,
+  p.panel_60_64,
   p.panel_65_74,
   p.panel_75_84,
   p.panel_85p,
@@ -253,7 +256,7 @@ CHECKS_PROVIDER = {
         f"WITH monthly AS ("
         f"  SELECT epdb_dw_prvdr_id, DATE_TRUNC(srv_start_dt, MONTH) AS month, "
         f"  COUNT(DISTINCT member_id) AS month_members "
-        f"  FROM `{CLAIMS}` WHERE prvdr_submarket IS NOT NULL "
+        f"  FROM `{CLAIMS}` WHERE prvdr_submarket IS NOT NULL AND age_nbr >= 60 "
         f"  AND EXTRACT(YEAR FROM srv_start_dt) IN (2024, 2025) GROUP BY 1, 2) "
         f"SELECT COUNT(*) AS bad_rows FROM ("
         f"  SELECT DISTINCT epdb_dw_prvdr_id, month, panel_members FROM `{OUT_PROVIDER}`) t "

@@ -70,13 +70,13 @@ METRICS_CSV    = os.path.join(OUT_DIR, "51_capacity_metrics.csv")
 IMPORTANCE_CSV = os.path.join(OUT_DIR, "51_capacity_feature_importance.csv")
 DIVERGENCE_CSV = os.path.join(OUT_DIR, "51_divergence_summary.csv")
 
-PROV_NUM = ["panel_members", "panel_lt65", "panel_65_74", "panel_75_84", "panel_85p",
+PROV_NUM = ["panel_members", "panel_60_64", "panel_65_74", "panel_75_84", "panel_85p",
             "panel_chronic_members", "pct_new_patients", "distinct_mbr_counties",
             "tenure_months", "month_of_year", "year", "month_index"]
 CNTY_NUM = ["providers", "pct_new_patients", "month_of_year", "year", "month_index"]
 CAT_FEATURES = ["specialty_ctg_cd", "prvdr_county"]
 
-PROV_COUNTS = ["visits", "panel_members", "panel_lt65", "panel_65_74", "panel_75_84",
+PROV_COUNTS = ["visits", "panel_members", "panel_60_64", "panel_65_74", "panel_75_84",
                "panel_85p", "panel_chronic_members", "distinct_mbr_counties", "tenure_months"]
 CNTY_COUNTS = ["visits", "providers"]
 TARGET_COLS = ["target_next_1m", "target_next_12m"]

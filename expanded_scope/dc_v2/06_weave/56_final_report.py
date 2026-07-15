@@ -1,17 +1,18 @@
 """
-56 - final report   [PYTHON / pandas + openpyxl]
+56 - master report   [PYTHON / pandas + openpyxl]
 
 WHAT  : The dc_v2 decision workbook, built from dc2_weave plus the model
         input tables. House style copied from 13_build_report.py (Arial,
         DARK_BLUE/MID_BLUE/LIGHT_BLUE scheme, cell/fill/thin helpers).
         Every data tab uses the actual table column names as headers, with
         a derivation row (italic, small, grey) above the header explaining
-        each derived column in one plain sentence; stored columns get
-        "as stored". Predictions are for calendar 2026, from models trained
-        on 2024-2025 history.
-        plan_type split deferred; v1 gap table remains the plan-type source.
-GRAIN : tabs at county x cms_specialty (Gap 2026), county (input tabs),
-        cms_specialty and state (summaries).
+        each column in one plain sentence; stored columns get "as stored".
+        Scope: CP and ME members aged 60 and above. Predictions are for
+        calendar 2026 from models trained on 2024-2025. Plan-type detail
+        lives in the v1 compliance report; this report is county x
+        specialty.
+GRAIN : Gap 2026 at county_fips x cms_specialty; input tabs per county;
+        summaries per specialty ranking in the Answers tab.
 INPUTS: dc2_weave, dc2_demand_base, dc2_demand_chronic,
         dc2_capacity_provider, cfg.base("ref_specialty_crosswalk")
 OUTPUT: medicare_demand_capacity_dc2.xlsx (repo root)
@@ -42,6 +43,7 @@ def _expanded_scope_dir():
 sys.path.insert(0, _expanded_scope_dir())
 import config as cfg
 
+import numpy as np
 import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -50,17 +52,16 @@ from openpyxl.formatting.rule import CellIsRule
 
 OUT_XLSX = cfg.repo_path("medicare_demand_capacity_dc2.xlsx")
 
-WEAVE     = cfg.src("dc2_weave")
-DEM_BASE  = cfg.src("dc2_demand_base")
-DEM_CHR   = cfg.src("dc2_demand_chronic")
-CAP_PROV  = cfg.src("dc2_capacity_provider")
-XWALK     = cfg.base("ref_specialty_crosswalk")
+WEAVE    = cfg.src("dc2_weave")
+DEM_BASE = cfg.src("dc2_demand_base")
+DEM_CHR  = cfg.src("dc2_demand_chronic")
+CAP_PROV = cfg.src("dc2_capacity_provider")
+XWALK    = cfg.base("ref_specialty_crosswalk")
 
 DARK_BLUE, MID_BLUE, LIGHT_BLUE = "1F3864", "2E75B6", "D6E4F0"
 GREY, DARK_GREY, WHITE = "F2F2F2", "595959", "FFFFFF"
 LIGHT_GREEN, LIGHT_RED = "E2EFDA", "FFE0E0"
-
-STATE_BY_FIPS = {v: k for k, v in cfg.STATES.items()}
+LIGHT_GOLD = "FFF2CC"
 
 
 # ---------- styling helpers (from 13_build_report.py) ----------
@@ -134,8 +135,8 @@ def _float(v, d=0.0):
 
 
 def derived_table(ws, df, cols, r0, filters=True):
-    """cols = list of (df_key, derivation_sentence, width, number_format, align).
-    Headers are the df_key column names verbatim; the derivation row sits above them."""
+    """cols = (df_key, derivation_sentence, width, number_format, align);
+    headers are the table column names verbatim; derivation row above."""
     for i, (key, derivation, w, _, _) in enumerate(cols):
         col = get_column_letter(i + 1)
         cell(ws, f"{col}{r0}", derivation, italic=True, size=8, color=DARK_GREY,
@@ -143,7 +144,7 @@ def derived_table(ws, df, cols, r0, filters=True):
         cell(ws, f"{col}{r0 + 1}", key, bold=True, color=WHITE, bg=DARK_BLUE, size=9,
              h_align="center", bdr=True)
         ws.column_dimensions[col].width = w
-    ws.row_dimensions[r0].height = 42
+    ws.row_dimensions[r0].height = 48
     ws.row_dimensions[r0 + 1].height = 24
     hdr = r0 + 1
     for ridx, (_, row) in enumerate(df.iterrows(), start=hdr + 1):
@@ -172,12 +173,12 @@ def load():
     client = cfg.client()
     q = lambda sql: client.query(sql).result().to_dataframe()
     d = {}
-    d["weave"] = q(f"SELECT * FROM `{WEAVE}` ORDER BY county, cms_specialty")
+    d["weave"] = q(f"SELECT * FROM `{WEAVE}` ORDER BY state_cd, county_fips, cms_specialty")
 
     d["dem_dec"] = q(f"""
-        SELECT mbr_county_cd, MAX(members) AS members, MAX(mbr_lt65) AS mbr_lt65,
-               MAX(mbr_65_74) AS mbr_65_74, MAX(mbr_75_84) AS mbr_75_84,
-               MAX(mbr_85p) AS mbr_85p
+        SELECT mbr_county_cd, MAX(members) AS members,
+               MAX(mbr_age_60_64) AS mbr_age_60_64, MAX(mbr_age_65_74) AS mbr_age_65_74,
+               MAX(mbr_age_75_84) AS mbr_age_75_84, MAX(mbr_age_85p) AS mbr_age_85p
         FROM `{DEM_BASE}` WHERE month = DATE '2025-12-01' GROUP BY 1""")
     d["dem_yr"] = q(f"""
         SELECT mbr_county_cd, SUM(visits) AS visits,
@@ -196,7 +197,7 @@ def load():
         SELECT prvdr_county,
                COUNT(DISTINCT IF(year = 2025, epdb_dw_prvdr_id, NULL)) AS providers,
                SUM(IF(month = DATE '2025-12-01', panel_members, 0)) AS panel_members,
-               SUM(IF(month = DATE '2025-12-01', panel_lt65, 0)) AS panel_lt65,
+               SUM(IF(month = DATE '2025-12-01', panel_60_64, 0)) AS panel_60_64,
                SUM(IF(month = DATE '2025-12-01', panel_65_74, 0)) AS panel_65_74,
                SUM(IF(month = DATE '2025-12-01', panel_75_84, 0)) AS panel_75_84,
                SUM(IF(month = DATE '2025-12-01', panel_85p, 0)) AS panel_85p,
@@ -217,17 +218,18 @@ def load():
     d["we_prev_row"] = q(f"SELECT HCC_v24, members_with_hcc, members, prevalence "
                          f"FROM `{DEM_CHR}` WHERE mbr_county_cd = '{d['we_county']}' "
                          f"AND month = DATE '2024-12-01' ORDER BY prevalence DESC LIMIT 1")
-    d["we_gap_row"] = q(f"SELECT county, cms_specialty, demand_next_12m_xgb, "
-                        f"capacity_next_12m_bottom_up, gap_next_12m FROM `{WEAVE}` "
-                        f"WHERE county = '{d['we_county']}' AND cms_specialty IN "
+    d["we_gap_row"] = q(f"SELECT county_fips, cms_specialty, demand_next_12m_xgb, "
+                        f"capacity_next_12m_bottom_up, gap_model_2026 FROM `{WEAVE}` "
+                        f"WHERE county_fips = '{d['we_county']}' AND cms_specialty IN "
                         f"(SELECT cms_specialty FROM `{XWALK}` WHERE aetna_cd = '{d['we_spec']}') "
-                        f"AND gap_next_12m IS NOT NULL "
-                        f"ORDER BY ABS(gap_next_12m) DESC LIMIT 1")
+                        f"AND gap_model_2026 IS NOT NULL "
+                        f"ORDER BY ABS(gap_model_2026) DESC LIMIT 1")
     if d["we_gap_row"].empty:
-        d["we_gap_row"] = q(f"SELECT county, cms_specialty, demand_next_12m_xgb, "
-                            f"capacity_next_12m_bottom_up, gap_next_12m FROM `{WEAVE}` "
-                            f"WHERE county = '{d['we_county']}' AND gap_next_12m IS NOT NULL "
-                            f"ORDER BY ABS(gap_next_12m) DESC LIMIT 1")
+        d["we_gap_row"] = q(f"SELECT county_fips, cms_specialty, demand_next_12m_xgb, "
+                            f"capacity_next_12m_bottom_up, gap_model_2026 FROM `{WEAVE}` "
+                            f"WHERE county_fips = '{d['we_county']}' "
+                            f"AND gap_model_2026 IS NOT NULL "
+                            f"ORDER BY ABS(gap_model_2026) DESC LIMIT 1")
     return d
 
 
@@ -237,65 +239,83 @@ def build_overview(wb):
     for col, w in {"A": 3, "B": 26, "C": 8, "D": 20, "E": 20, "F": 20, "G": 20, "H": 20}.items():
         ws.column_dimensions[col].width = w
     title(ws, "Medicare Demand vs Capacity - dc_v2",
-          "Modeled 2026 estimates | Aetna Medicare | FL OH AZ IL footprint")
+          "Modeled 2026 estimates | commercial (CP) and Medicare (ME) members aged 60+")
     r = 4
     r = section_header(ws, r, 2, 8, "WHAT THIS WORKBOOK IS")
     r = kv(ws, r, "In plain words",
-           "This workbook estimates, for every county and medical specialty in our footprint, "
-           "how many visits our Medicare members will need in 2026 and how many visits our "
-           "contracted providers will deliver. The difference between the two is the gap. The "
-           "need estimate comes from a model that learned from two years of our own visit "
-           "history, member counts, ages, and health conditions. The delivery estimate comes "
-           "from a model that learned each provider's own history and then adds the providers "
-           "up by county. The previous method's numbers are shown next to the new ones so the "
-           "two can be compared. Predictions are for calendar 2026, produced by models trained "
-           "on 2024-2025 history.", h=110)
+           "For every county and medical specialty in our footprint, this workbook estimates "
+           "how many visits our members aged 60 and above will need in 2026 and how many "
+           "visits our contracted providers will deliver to them. The difference is the gap. "
+           "The estimates come from models that learned from our own 2024-2025 visit history, "
+           "member counts, ages, and health conditions. The current method's numbers are "
+           "shown next to the model's so the two can be compared.", h=90)
+    r = kv(ws, r, "Scope",
+           "CP and ME members aged 60 and above. Predictions are for calendar 2026, from "
+           "models trained on 2024-2025 history.", h=28)
+    r = kv(ws, r, "Plan types",
+           "Plan-type detail lives in the v1 compliance report; this report is county x "
+           "specialty.", h=26)
     r = blank(ws, r)
     r = section_header(ws, r, 2, 8, "THREE CAVEATS - READ BEFORE THE NUMBERS")
     r = kv(ws, r, "Caveat 1",
-           "Capacity counts only visits delivered to Aetna members, not the provider's full "
+           "Capacity counts only visits delivered to our members, not the provider's whole "
            "practice.", h=26)
     r = kv(ws, r, "Caveat 2",
-           "Chronic condition and sickness measures use each visit's main diagnosis only, so "
-           "they undercount.", h=26)
+           "Condition measures use each visit's main diagnosis only, so they undercount.", h=26)
     r = kv(ws, r, "Caveat 3",
-           "Numbers for counties labeled trust_band = small are too thin to read individually "
-           "- use submarket or state rollups there.", h=26)
+           "Rows with expected_error_band C should be read at submarket or state rollup, "
+           "not individually.", h=26)
     ws.freeze_panes = "A3"
     return 0
 
 
-# ---------- tab 2: Gap 2026 ----------
+# ---------- tab 2: Gap 2026 (master) ----------
 GAP_COLS = [
-    ("county", AS_STORED, 12, None, "left"),
-    ("cms_specialty", AS_STORED, 26, None, "left"),
+    ("state_cd", AS_STORED, 8, None, "left"),
+    ("county_fips", AS_STORED, 11, None, "left"),
+    ("cms_specialty", AS_STORED, 24, None, "left"),
+    ("demand_current_book",
+     "current-method demand for our enrolled members aged 60 and above",
+     14, "#,##0", "right"),
+    ("capacity_current",
+     "current-method capacity carried from the v1 pipeline",
+     13, "#,##0", "right"),
+    ("gap_current_book",
+     "demand_current_book minus capacity_current; positive = shortage",
+     13, "#,##0", "right"),
     ("demand_next_12m_xgb",
      "model estimate of visits members in this county will need in 2026",
-     16, "#,##0", "right"),
-    ("demand_next_1m_xgb",
-     "model estimate of visits members in this county will need in January 2026",
-     16, "#,##0", "right"),
-    ("capacity_next_12m_bottom_up",
-     "sum of per-provider model estimates of visits providers in this county will deliver in 2026",
-     18, "#,##0", "right"),
-    ("capacity_next_1m_bottom_up",
-     "sum of per-provider model estimates for January 2026",
-     18, "#,##0", "right"),
-    ("gap_next_12m",
-     "demand_next_12m_xgb minus capacity_next_12m_bottom_up; positive = shortage",
      14, "#,##0", "right"),
-    ("demand_p75_annual",
-     "same demand computed with the previous method, for comparison",
+    ("capacity_next_12m_bottom_up",
+     "sum of per-provider model estimates of visits providers here will deliver in 2026",
      15, "#,##0", "right"),
-    ("capacity_p75_annual",
-     "same capacity computed with the previous method, for comparison",
-     15, "#,##0", "right"),
-    ("gap_p75",
-     "same gap computed with the previous method, for comparison",
+    ("gap_model_2026",
+     "demand_next_12m_xgb minus capacity_next_12m_bottom_up; positive = shortage",
      13, "#,##0", "right"),
-    ("trust_band",
-     "county size label; small = do not read individual numbers",
-     11, None, "center"),
+    ("capacity_to_demand_ratio",
+     "capacity divided by demand; 1.0 = exactly enough",
+     12, "0.00", "right"),
+    ("capacity_potential_p75",
+     "if every provider here delivered like the busiest quarter of their local peers",
+     14, "#,##0", "right"),
+    ("gap_status",
+     "UNDER = members need more visits than providers can deliver; OVER = the reverse; "
+     "no middle label - read the gap and ratio columns for degree",
+     10, None, "center"),
+    ("expected_error_pct",
+     "the measured average percent miss behind the band",
+     11, "0.0%", "right"),
+    ("expected_error_band",
+     "A = model missed by 25% or less on months it never saw; B = up to 50%; "
+     "C = more - roll up before reading",
+     10, None, "center"),
+    ("pct_medicare_age_members",
+     "share of the county's members aged 65 and above, December 2025",
+     12, "0.0%", "right"),
+    ("market_max_demand",
+     "ceiling - every Medicare-eligible in the county, not just our members; "
+     "context only, in no gap",
+     14, "#,##0", "right"),
 ]
 
 
@@ -304,16 +324,99 @@ def build_gap(wb, weave):
     title(ws, "Gap 2026", "one row per county x cms_specialty from dc2_weave",
           ncols=len(GAP_COLS))
     hdr = derived_table(ws, weave, GAP_COLS, 4)
-    gap_col = get_column_letter([k for k, *_ in GAP_COLS].index("gap_next_12m") + 1)
+    keys = [k for k, *_ in GAP_COLS]
+    gap_col = get_column_letter(keys.index("gap_model_2026") + 1)
     rng = f"{gap_col}{hdr + 1}:{gap_col}{hdr + len(weave)}"
     ws.conditional_formatting.add(rng, CellIsRule(operator="greaterThan", formula=["0"],
                                                   fill=fill(LIGHT_RED)))
     ws.conditional_formatting.add(rng, CellIsRule(operator="lessThan", formula=["0"],
                                                   fill=fill(LIGHT_GREEN)))
+    band_col = get_column_letter(keys.index("expected_error_band") + 1)
+    brng = f"{band_col}{hdr + 1}:{band_col}{hdr + len(weave)}"
+    for value, hx in (("A", LIGHT_GREEN), ("B", LIGHT_GOLD), ("C", LIGHT_RED)):
+        ws.conditional_formatting.add(
+            brng, CellIsRule(operator="equal", formula=[f'"{value}"'], fill=fill(hx)))
     return len(weave)
 
 
-# ---------- tab 3: Demand Inputs ----------
+# ---------- tab 3: Answers ----------
+ANSWER_COLS = [
+    ("state_cd", 8, None, "left"),
+    ("county_fips", 11, None, "left"),
+    ("cms_specialty", 24, None, "left"),
+    ("demand_next_12m_xgb", 14, "#,##0", "right"),
+    ("capacity_next_12m_bottom_up", 15, "#,##0", "right"),
+    ("gap_model_2026", 13, "#,##0", "right"),
+    ("capacity_to_demand_ratio", 12, "0.00", "right"),
+    ("gap_current_book", 13, "#,##0", "right"),
+    ("expected_error_band", 10, None, "center"),
+]
+
+
+def _answer_table(ws, df, r0):
+    for i, (key, w, _, _) in enumerate(ANSWER_COLS):
+        col = get_column_letter(i + 1)
+        cell(ws, f"{col}{r0}", key, bold=True, color=WHITE, bg=DARK_BLUE, size=9,
+             h_align="center", bdr=True)
+        ws.column_dimensions[col].width = w
+    ws.row_dimensions[r0].height = 24
+    for ridx, (_, row) in enumerate(df.iterrows(), start=r0 + 1):
+        bg = GREY if ridx % 2 == 0 else WHITE
+        for i, (key, _, num, align) in enumerate(ANSWER_COLS):
+            v = row.get(key)
+            if hasattr(v, "item"):
+                v = v.item()
+            if num and v is not None and pd.notna(v):
+                v = _float(v) if ("%" in num or "." in num) else _int(v)
+            elif v is None or pd.isna(v):
+                v = None
+            cell(ws, f"{get_column_letter(i + 1)}{ridx}", v, bg=bg, size=9, bdr=True,
+                 num=num, h_align=align)
+    return r0 + len(df) + 2
+
+
+def build_answers(wb, weave):
+    ws = wb.create_sheet("Answers")
+    title(ws, "Answers", "ranked views of the Gap 2026 tab; bands A and B only",
+          ncols=len(ANSWER_COLS))
+    ab = weave[weave["expected_error_band"].isin(["A", "B"])]
+    r = 4
+
+    r = section_header(ws, r, 1, len(ANSWER_COLS), "WHERE ARE WE SHORT?")
+    ws.merge_cells(f"A{r}:{get_column_letter(len(ANSWER_COLS))}{r}")
+    cell(ws, f"A{r}", "Top 25 by gap_model_2026, largest shortage first. Band C rows are "
+                      "excluded here and appear in the master tab.", italic=True, size=9,
+         color=DARK_GREY)
+    r += 1
+    short = ab[ab["gap_model_2026"].notna()].sort_values(
+        "gap_model_2026", ascending=False).head(25)
+    r = _answer_table(ws, short, r)
+
+    r = section_header(ws, r, 1, len(ANSWER_COLS), "WHERE DO WE HAVE EXCESS?")
+    ws.merge_cells(f"A{r}:{get_column_letter(len(ANSWER_COLS))}{r}")
+    cell(ws, f"A{r}", "Top 25 by capacity_to_demand_ratio, most excess first. Band C rows "
+                      "are excluded here and appear in the master tab.", italic=True, size=9,
+         color=DARK_GREY)
+    r += 1
+    excess = ab[ab["capacity_to_demand_ratio"].notna()].sort_values(
+        "capacity_to_demand_ratio", ascending=False).head(25)
+    r = _answer_table(ws, excess, r)
+
+    r = section_header(ws, r, 1, len(ANSWER_COLS), "WATCH LIST")
+    ws.merge_cells(f"A{r}:{get_column_letter(len(ANSWER_COLS))}{r}")
+    cell(ws, f"A{r}", "Rows where gap_current_book and gap_model_2026 disagree in sign: the "
+                      "current method and the model see different directions - these need "
+                      "human eyes. Band C rows are excluded here and appear in the master tab.",
+         italic=True, size=9, color=DARK_GREY)
+    r += 1
+    watch = ab[ab["gap_model_2026"].notna() & ab["gap_current_book"].notna()
+               & (np.sign(ab["gap_model_2026"]) != np.sign(ab["gap_current_book"]))]
+    r = _answer_table(ws, watch, r)
+    ws.freeze_panes = "A4"
+    return len(short) + len(excess) + len(watch)
+
+
+# ---------- tab 4: Demand Inputs ----------
 def build_demand_inputs(wb, d):
     ws = wb.create_sheet("Demand Inputs")
     prev = d["top5_prev"].copy()
@@ -328,11 +431,11 @@ def build_demand_inputs(wb, d):
     prev_cols = sorted(c for c in df.columns if c.startswith("prev_hcc_"))
     cols = [
         ("mbr_county_cd", AS_STORED, 12, None, "left"),
-        ("members", "distinct members in the county in December 2025", 11, "#,##0", "right"),
-        ("mbr_lt65", "members under 65 in December 2025", 10, "#,##0", "right"),
-        ("mbr_65_74", "members 65-74 in December 2025", 10, "#,##0", "right"),
-        ("mbr_75_84", "members 75-84 in December 2025", 10, "#,##0", "right"),
-        ("mbr_85p", "members 85 and over in December 2025", 10, "#,##0", "right"),
+        ("members", "distinct members aged 60+ in the county, December 2025", 11, "#,##0", "right"),
+        ("mbr_age_60_64", "members 60-64, December 2025", 11, "#,##0", "right"),
+        ("mbr_age_65_74", "members 65-74, December 2025", 11, "#,##0", "right"),
+        ("mbr_age_75_84", "members 75-84, December 2025", 11, "#,##0", "right"),
+        ("mbr_age_85p", "members 85 and over, December 2025", 11, "#,##0", "right"),
         ("pct_new_patients",
          "share of 2025 visits where the member had not seen that provider in the previous 12 months",
          13, "0.0%", "right"),
@@ -345,7 +448,7 @@ def build_demand_inputs(wb, d):
     return len(df)
 
 
-# ---------- tab 4: Capacity Inputs ----------
+# ---------- tab 5: Capacity Inputs ----------
 def build_capacity_inputs(wb, d):
     ws = wb.create_sheet("Capacity Inputs")
     df = d["cap_inputs"]
@@ -353,7 +456,7 @@ def build_capacity_inputs(wb, d):
         ("prvdr_county", AS_STORED, 16, None, "left"),
         ("providers", "distinct providers with 2025 visits in this county", 11, "#,##0", "right"),
         ("panel_members", "sum of provider panel sizes, December 2025", 13, "#,##0", "right"),
-        ("panel_lt65", "panel members under 65, December 2025", 11, "#,##0", "right"),
+        ("panel_60_64", "panel members 60-64, December 2025", 11, "#,##0", "right"),
         ("panel_65_74", "panel members 65-74, December 2025", 11, "#,##0", "right"),
         ("panel_75_84", "panel members 75-84, December 2025", 11, "#,##0", "right"),
         ("panel_85p", "panel members 85 and over, December 2025", 11, "#,##0", "right"),
@@ -373,7 +476,7 @@ def build_capacity_inputs(wb, d):
     return len(df)
 
 
-# ---------- tab 5: Worked Examples ----------
+# ---------- tab 6: Worked Examples ----------
 def _example(ws, r, heading, caption, rows):
     r = section_header(ws, r, 2, 8, heading)
     ws.merge_cells(f"B{r}:H{r}")
@@ -424,75 +527,38 @@ def build_worked_examples(wb, d):
     if len(d["we_gap_row"]):
         g = d["we_gap_row"].iloc[0]
         dem = float(g["demand_next_12m_xgb"]) if pd.notna(g["demand_next_12m_xgb"]) else 0.0
-        cap = float(g["capacity_next_12m_bottom_up"]) if pd.notna(g["capacity_next_12m_bottom_up"]) else 0.0
-        gap = float(g["gap_next_12m"]) if pd.notna(g["gap_next_12m"]) else dem - cap
-        r = _example(ws, r, "EXAMPLE C - how gap_next_12m was computed",
-                     f"County {g['county']}, specialty {g['cms_specialty']}: demand estimate "
-                     f"minus capacity estimate; positive = shortage.",
+        cap = float(g["capacity_next_12m_bottom_up"]) if pd.notna(
+            g["capacity_next_12m_bottom_up"]) else 0.0
+        gap = float(g["gap_model_2026"]) if pd.notna(g["gap_model_2026"]) else dem - cap
+        r = _example(ws, r, "EXAMPLE C - how gap_model_2026 was computed",
+                     f"County {g['county_fips']}, specialty {g['cms_specialty']}: demand "
+                     f"estimate minus capacity estimate; positive = shortage.",
                      [("numerator (demand_next_12m_xgb)", f"{dem:,.0f}"),
                       ("denominator (capacity_next_12m_bottom_up)", f"{cap:,.0f}"),
-                      ("result (gap_next_12m)", f"{dem:,.0f} - {cap:,.0f} = {gap:,.0f}")])
+                      ("result (gap_model_2026)", f"{dem:,.0f} - {cap:,.0f} = {gap:,.0f}")])
         n += 1
     ws.freeze_panes = "A3"
     return n
 
 
-# ---------- tabs 6-7: summaries ----------
-SUM_MEASURES = ["demand_next_12m_xgb", "capacity_next_12m_bottom_up", "gap_next_12m",
-                "demand_p75_annual", "capacity_p75_annual", "gap_p75"]
-SUM_DERIVATIONS = {
-    "demand_next_12m_xgb": "sum of the model's 2026 demand estimates",
-    "capacity_next_12m_bottom_up": "sum of the model's 2026 capacity estimates",
-    "gap_next_12m": "summed demand minus summed capacity; positive = shortage",
-    "demand_p75_annual": "same demand, previous method",
-    "capacity_p75_annual": "same capacity, previous method",
-    "gap_p75": "same gap, previous method",
-}
-
-
-def _summary_cols(first_key, first_width):
-    return ([(first_key, AS_STORED if first_key != "state" else
-              "first two digits of county mapped to the state code", first_width, None, "left")]
-            + [(m, SUM_DERIVATIONS[m], 16, "#,##0", "right") for m in SUM_MEASURES])
-
-
-def build_summary_specialty(wb, weave):
-    ws = wb.create_sheet("Summary by cms_specialty")
-    grp = weave.groupby("cms_specialty", as_index=False)[SUM_MEASURES].sum(min_count=1)
-    grp = grp.sort_values("gap_next_12m", ascending=False).reset_index(drop=True)
-    cols = _summary_cols("cms_specialty", 28)
-    title(ws, "Summary by cms_specialty", "summed across counties per specialty",
-          ncols=len(cols))
-    derived_table(ws, grp, cols, 4)
-    return len(grp)
-
-
-def build_summary_state(wb, weave):
-    ws = wb.create_sheet("Summary by State")
-    df = weave.copy()
-    df["state"] = df["county"].astype(str).str[:2].map(STATE_BY_FIPS).fillna("OTHER")
-    grp = df.groupby("state", as_index=False)[SUM_MEASURES].sum(min_count=1)
-    grp = grp.sort_values("state").reset_index(drop=True)
-    cols = _summary_cols("state", 10)
-    title(ws, "Summary by State", "summed per state (state from the county code prefix)",
-          ncols=len(cols))
-    derived_table(ws, grp, cols, 4)
-    return len(grp)
-
-
-# ---------- tab 8: Data Dictionary ----------
+# ---------- tab 7: Data Dictionary ----------
 DICT_ROWS = [
-    ("county", "member or provider county code; the join key of the table", "dc2_weave", "stored"),
-    ("cms_specialty", "CMS specialty name after the one-time bridge from claims specialty codes", "dc2_weave", "stored"),
+    ("state_cd", "state code of the county", "dc2_baselines (from the v1 gap table)", "stored"),
+    ("county_fips", "county code; the join key of the table", "dc2_weave inputs", "stored"),
+    ("cms_specialty", "CMS specialty name after the one-time bridge from claims specialty codes", "ref_specialty_crosswalk", "stored"),
+    ("demand_current_book", "current-method demand rebuilt for enrolled members aged 60+", "dc2_baselines", "derived"),
+    ("capacity_current", "current-method capacity carried verbatim from the v1 pipeline", "dc2_baselines", "stored"),
+    ("gap_current_book", "demand_current_book minus capacity_current; positive = shortage", "dc2_baselines", "derived"),
     ("demand_next_12m_xgb", "model estimate of visits the county's members will need in 2026", "dc2_demand_predictions (future rows)", "derived"),
-    ("demand_next_1m_xgb", "model estimate of visits needed in January 2026", "dc2_demand_predictions (future rows)", "derived"),
     ("capacity_next_12m_bottom_up", "sum of per-provider model estimates of visits delivered in 2026", "dc2_capacity_predictions (future rows)", "derived"),
-    ("capacity_next_1m_bottom_up", "sum of per-provider estimates for January 2026", "dc2_capacity_predictions (future rows)", "derived"),
-    ("gap_next_12m", "demand_next_12m_xgb minus capacity_next_12m_bottom_up; positive = shortage", "computed in 55_weave.py", "derived"),
-    ("demand_p75_annual", "demand from the previous method, for comparison", "dc2_p75_baseline (v1 pipeline 30-38)", "stored"),
-    ("capacity_p75_annual", "capacity from the previous method, for comparison", "dc2_p75_baseline (v1 pipeline 30-38)", "stored"),
-    ("gap_p75", "demand_p75_annual minus capacity_p75_annual", "computed in 55_weave.py", "derived"),
-    ("trust_band", "county size label from 2024 visits: small under 10k, mid 10k-100k, large over 100k", "dc2_capacity_county", "derived"),
+    ("gap_model_2026", "demand_next_12m_xgb minus capacity_next_12m_bottom_up; positive = shortage", "computed in 55_weave.py", "derived"),
+    ("capacity_to_demand_ratio", "capacity divided by demand; 1.0 = exactly enough", "computed in 55_weave.py", "derived"),
+    ("capacity_potential_p75", "75th percentile of local per-provider 2026 estimates times the provider count", "dc2_capacity_provider_future", "derived"),
+    ("gap_status", "UNDER where gap_model_2026 is positive, OVER otherwise; empty where a side is missing", "computed in 55_weave.py", "derived"),
+    ("expected_error_pct", "measured average percent miss of the demand model on unseen 2025 months, per county", "dc2_demand_predictions (validation rows)", "derived"),
+    ("expected_error_band", "A at 25% or less, B up to 50%, C above or unmeasured", "computed in 55_weave.py", "derived"),
+    ("pct_medicare_age_members", "December 2025 members aged 65+ over all members", "A870800_medicare_analysis_membership", "derived"),
+    ("market_max_demand", "eligibles-based demand ceiling, context only, in no gap", "dc2_baselines (from the v1 gap table)", "stored"),
 ]
 
 
@@ -501,14 +567,14 @@ def build_dictionary(wb):
     dd = pd.DataFrame(DICT_ROWS, columns=["column", "meaning", "source", "derived_or_stored"])
     cols = [("column", "column name, verbatim", 28, None, "left"),
             ("meaning", "plain-words meaning", 66, None, "left"),
-            ("source", "source table", 38, None, "left"),
+            ("source", "source table", 40, None, "left"),
             ("derived_or_stored", "derived here or stored upstream", 16, None, "center")]
     title(ws, "Data Dictionary", "every dc2_weave column", ncols=len(cols))
     derived_table(ws, dd, cols, 4)
     return len(dd)
 
 
-# ---------- tab 9: Methodology ----------
+# ---------- tab 8: Methodology ----------
 def build_methodology(wb):
     ws = wb.create_sheet("Methodology")
     for col, w in {"A": 3, "B": 30, "C": 8, "D": 20, "E": 20, "F": 20, "G": 20, "H": 20}.items():
@@ -518,58 +584,48 @@ def build_methodology(wb):
     r = section_header(ws, r, 2, 8, "THE STEPS")
     r = kv(ws, r, "The demand model",
            "One model, trained on every county and specialty together, using 2024-2025 "
-           "history: how many members lived in each county, their ages, how common each "
-           "health condition was, the share of first-time patients, and the calendar. It "
-           "produces an estimate of visits needed per county and specialty for 2026.", h=64)
+           "history: how many members aged 60 and above lived in each county, their ages, "
+           "how common each health condition was, the share of first-time patients, and the "
+           "calendar. It produces an estimate of visits needed per county and specialty for "
+           "2026.", h=64)
     r = kv(ws, r, "The capacity model",
            "One model, trained on every provider together, using each provider's own "
            "history: how many members they saw, the ages and conditions of those members, "
            "how many were new to them, and how long the provider has been in our data. Its "
            "per-provider 2026 estimates are added up to the county level.", h=64)
-    r = kv(ws, r, "The previous-method columns",
-           "demand_p75_annual, capacity_p75_annual and gap_p75 carry the earlier "
-           "rule-of-thumb method (a busy provider's typical volume, trimmed by how full "
-           "their patient panel already is). They are shown so the new estimates can be "
-           "compared against what was reported before.", h=52)
-    r = kv(ws, r, "The gap",
-           "gap_next_12m = demand estimate minus capacity estimate for the same county and "
-           "specialty. Positive means members are expected to need more visits than the "
-           "contracted network is expected to deliver.", h=40)
-    r = kv(ws, r, "trust_band",
-           "A county size label based on 2024 visit volume: small (under 10 thousand), mid "
-           "(10 thousand to 100 thousand), large (over 100 thousand). Small counties have "
-           "too little history for their individual numbers to be reliable.", h=40)
+    r = kv(ws, r, "The current-method columns",
+           "demand_current_book, capacity_current and gap_current_book carry the earlier "
+           "method, rebuilt on the same population as the models (enrolled members aged 60 "
+           "and above) so the comparison is fair. market_max_demand is the eligibles-based "
+           "ceiling and enters no gap.", h=52)
+    r = kv(ws, r, "The gap and the ratio",
+           "gap_model_2026 = demand estimate minus capacity estimate for the same county and "
+           "specialty; positive means members are expected to need more visits than the "
+           "network delivers. capacity_to_demand_ratio is the same comparison as a ratio; "
+           "1.0 means exactly enough.", h=52)
+    r = kv(ws, r, "expected_error_band",
+           "Measured on 2025 months the model never trained on: the average percent miss per "
+           "county. A means 25 percent or less, B up to 50 percent, C more than that or too "
+           "little history to measure. C rows should be read only in rollups.", h=52)
     r = kv(ws, r, "Model quality, measured",
-           "Checked on 2025 months the models never trained on. The demand annual model "
-           "missed by about 655 visits per county-specialty on average. The capacity model "
-           "missed by about 18 percent in large counties and about 40 percent in mid "
-           "counties; small-county numbers are unreliable and should be read only in "
-           "rollups. Both models are gradient boosted trees (XGBoost) - a method that "
-           "builds many small decision rules and adds them together.", h=76)
-    r = blank(ws, r)
-    r = section_header(ws, r, 2, 8, "HOW THE MODELS WORK")
-    r = kv(ws, r, "Demand model",
-           "One model for all counties and specialties; it learns from member counts, ages, "
-           "condition rates, and calendar patterns, and produces a 2026 estimate per county "
-           "and specialty.", h=40)
-    r = kv(ws, r, "Capacity model",
-           "One model for all providers; it learns from panel size, panel ages, panel "
-           "conditions, new-patient share, and time in data; per-provider estimates are "
-           "summed to county.", h=40)
+           "The demand annual model missed by about 655 visits per county-specialty on "
+           "average on unseen months. The capacity model missed by about 18 percent in "
+           "large counties and about 40 percent in mid-size counties; small-county numbers "
+           "are unreliable individually. Both models are gradient boosted trees (XGBoost) - "
+           "a method that builds many small decision rules and adds them together.", h=76)
     r = blank(ws, r)
     r = section_header(ws, r, 2, 8, "OTHER MODEL DESIGNS CONSIDERED")
-    r = kv(ws, r, "Separate forecast per geography level with reconciliation",
-           "Build numbers at zip, county, and state independently, then force them to "
-           "agree. Not chosen: county-only modeling made the agreement step unnecessary.", h=40)
+    r = kv(ws, r, "Per-level forecasts with reconciliation",
+           "Build numbers at zip, county, and state independently, then force them to agree. "
+           "Unnecessary once county became the single modeling level.", h=36)
     r = kv(ws, r, "County-level top-down capacity model",
-           "Built and tested; lost to the provider-level model on 2025 held-out data in "
-           "every county size band (misses roughly 2 to 10 times larger). Kept in the "
-           "prediction table for reference, dropped from this report.", h=40)
+           "Built and tested; lost to the provider-level model in every county size band on "
+           "held-out 2025 data, dropped.", h=36)
     r = kv(ws, r, "Cluster-then-model",
-           "Group similar counties or providers into roughly 10-20 clusters and fit one "
-           "small model per cluster instead of one pooled model. Not chosen this round for "
-           "time; noted as the planned approach if per-segment explanations are requested, "
-           "and as the cluster-average third estimate in the original design.", h=52)
+           "Group similar counties or providers into 10-20 clusters and fit one small model "
+           "per cluster instead of one pooled model. Planned next step if per-segment "
+           "explanation is requested, and the route to the cluster-average third estimate "
+           "from the original design.", h=52)
     ws.freeze_panes = "A3"
     return 0
 
@@ -582,11 +638,10 @@ def main():
     counts = {}
     counts["Overview"] = build_overview(wb)
     counts["Gap 2026"] = build_gap(wb, d["weave"])
+    counts["Answers"] = build_answers(wb, d["weave"])
     counts["Demand Inputs"] = build_demand_inputs(wb, d)
     counts["Capacity Inputs"] = build_capacity_inputs(wb, d)
     counts["Worked Examples"] = build_worked_examples(wb, d)
-    counts["Summary by cms_specialty"] = build_summary_specialty(wb, d["weave"])
-    counts["Summary by State"] = build_summary_state(wb, d["weave"])
     counts["Data Dictionary"] = build_dictionary(wb)
     counts["Methodology"] = build_methodology(wb)
     wb.save(OUT_XLSX)

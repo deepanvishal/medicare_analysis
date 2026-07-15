@@ -10,6 +10,8 @@ WHAT  : Builds the two demand-side history tables. Visits attributed to the
         the 12 months before M. Dx join:
         UPPER(REPLACE(TRIM(pri_icd9_dx_cd), '.', '')) =
         UPPER(TRIM(diagnosis_code)); mapped means HCC_v24 IS NOT NULL.
+SCOPE : CP and ME members aged 60+; under-60 members and their claims are
+        excluded from every number in this table.
 GRAIN : dc2_demand_base    -> mbr_county_cd x specialty_ctg_cd x month
                               (month DATE, first of month; 2024-2025)
         dc2_demand_chronic -> mbr_county_cd x month x HCC_v24 (2024-2025)
@@ -60,12 +62,13 @@ MEMBER_COUNTS = f"""
     mbr_county_cd,
     DATE(CAST(eff_yr AS INT64), CAST(eff_mo AS INT64), 1) AS month,
     COUNT(DISTINCT member_id)                                        AS members,
-    COUNT(DISTINCT IF(age_nbr < 65, member_id, NULL))                AS mbr_lt65,
-    COUNT(DISTINCT IF(age_nbr BETWEEN 65 AND 74, member_id, NULL))   AS mbr_65_74,
-    COUNT(DISTINCT IF(age_nbr BETWEEN 75 AND 84, member_id, NULL))   AS mbr_75_84,
-    COUNT(DISTINCT IF(age_nbr >= 85, member_id, NULL))               AS mbr_85p
+    COUNT(DISTINCT IF(age_nbr BETWEEN 60 AND 64, member_id, NULL))   AS mbr_age_60_64,
+    COUNT(DISTINCT IF(age_nbr BETWEEN 65 AND 74, member_id, NULL))   AS mbr_age_65_74,
+    COUNT(DISTINCT IF(age_nbr BETWEEN 75 AND 84, member_id, NULL))   AS mbr_age_75_84,
+    COUNT(DISTINCT IF(age_nbr >= 85, member_id, NULL))               AS mbr_age_85p
   FROM `{MBRSHP}`
   WHERE mbr_submarket IS NOT NULL
+    AND age_nbr >= 60
     AND CAST(eff_yr AS INT64) IN (2024, 2025)
   GROUP BY 1, 2
 """
@@ -84,6 +87,7 @@ WITH claims_f AS (
     specialty_ctg_cd
   FROM `{CLAIMS}`
   WHERE mbr_submarket IS NOT NULL
+    AND age_nbr >= 60
 ),
 pair_months AS (
   SELECT DISTINCT member_id, epdb_dw_prvdr_id, month
@@ -146,10 +150,10 @@ SELECT
   t.target_next_1m,
   t.target_next_12m,
   m.members,
-  m.mbr_lt65,
-  m.mbr_65_74,
-  m.mbr_75_84,
-  m.mbr_85p,
+  m.mbr_age_60_64,
+  m.mbr_age_65_74,
+  m.mbr_age_75_84,
+  m.mbr_age_85p,
   SAFE_DIVIDE(v.new_visits, v.visits) AS pct_new_patients,
   EXTRACT(MONTH FROM v.month) AS month_of_year,
   EXTRACT(YEAR FROM v.month) AS year,
@@ -178,6 +182,7 @@ WITH mapped_claims AS (
   JOIN `{MAP}` h
     ON UPPER(REPLACE(TRIM(c.pri_icd9_dx_cd), '.', '')) = UPPER(TRIM(h.diagnosis_code))
   WHERE c.mbr_submarket IS NOT NULL
+    AND c.age_nbr >= 60
     AND h.HCC_v24 IS NOT NULL
 ),
 months AS (
@@ -222,7 +227,8 @@ CHECKS_BASE = {
         f"CAST(specialty_ctg_cd AS STRING), '|', CAST(member_id AS STRING), '|', "
         f"CAST(epdb_dw_prvdr_id AS STRING), '|', CAST(srv_start_dt AS STRING))) "
         f"AS direct_visits_2024 FROM `{CLAIMS}` "
-        f"WHERE mbr_submarket IS NOT NULL AND EXTRACT(YEAR FROM srv_start_dt) = 2024",
+        f"WHERE mbr_submarket IS NOT NULL AND age_nbr >= 60 "
+        f"AND EXTRACT(YEAR FROM srv_start_dt) = 2024",
     "cells with pct_new_patients > 1 (must be 0)":
         f"SELECT COUNT(*) AS bad_cells FROM `{OUT_BASE}` WHERE pct_new_patients > 1",
 }
