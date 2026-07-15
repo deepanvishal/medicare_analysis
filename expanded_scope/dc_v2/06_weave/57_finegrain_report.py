@@ -200,6 +200,18 @@ def attach_errors(fut, county_col, cell_stats, county_stats, band_stats):
     return df
 
 
+def _normalize_provider_keys(df, name):
+    raw = df["epdb_dw_prvdr_id"].copy()
+    df["epdb_dw_prvdr_id"] = pd.to_numeric(df["epdb_dw_prvdr_id"], errors="coerce").astype("Int64")
+    n_null = int(df["epdb_dw_prvdr_id"].isna().sum())
+    print(f"{name}: epdb_dw_prvdr_id null after cast: {n_null} (must be 0)")
+    if n_null:
+        print(f"{name}: sample raw values before cast: "
+              f"{raw[df['epdb_dw_prvdr_id'].isna()].head(5).tolist()}")
+    df["specialty_ctg_cd"] = df["specialty_ctg_cd"].astype(str)
+    return df
+
+
 def load():
     client = cfg.client()
     q = lambda sql: client.query(sql).result().to_dataframe()
@@ -219,6 +231,7 @@ def load():
                      f"ORDER BY prvdr_county, specialty_ctg_cd")
     d["prov_fut"] = q(f"SELECT epdb_dw_prvdr_id, specialty_ctg_cd, prvdr_county, "
                       f"provider_pred_next_1m, provider_pred_next_12m FROM `{PROV_FUT}`")
+    d["prov_fut"] = _normalize_provider_keys(d["prov_fut"], "dc2_capacity_provider_future")
     d["prov_inputs"] = q(f"""
         SELECT a.epdb_dw_prvdr_id, a.specialty_ctg_cd,
                a.panel_members, a.pct_new_patients, a.tenure_months,
@@ -230,6 +243,7 @@ def load():
                    FROM `{CAP_PROV}` WHERE year = 2025 GROUP BY 1, 2) b
         ON a.epdb_dw_prvdr_id = b.epdb_dw_prvdr_id
         AND a.specialty_ctg_cd = b.specialty_ctg_cd""")
+    d["prov_inputs"] = _normalize_provider_keys(d["prov_inputs"], "dc2_capacity_provider")
     return d
 
 

@@ -84,7 +84,7 @@ state_morbidity_mix AS (
     state_cd,
     age_band,
     morbidity_level,
-    COUNT(*) / SUM(COUNT(*)) OVER (PARTITION BY state_cd, age_band) AS mix_share
+    SAFE_DIVIDE(COUNT(*), SUM(COUNT(*)) OVER (PARTITION BY state_cd, age_band)) AS mix_share
   FROM `{MEMDIM}`
   WHERE age_band != 'UNDER_60'
   GROUP BY 1, 2, 3
