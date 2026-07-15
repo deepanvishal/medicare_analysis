@@ -215,7 +215,7 @@ def main():
     metrics, importances = [], []
 
     prov = load(PROV_TBL, PROV_COUNTS, "dc2_capacity_provider")
-    prov_band = prov["prvdr_county"].map(county_2024).fillna(0).map(size_band)
+    prov_band = county_band_series(prov, county_2024, "provider frame")
 
     log("building provider XGBoost feature frame (float32/int32, column-referenced)")
     prov_data = {c: prov[c].fillna(0) for c in PROV_NUM}
@@ -314,7 +314,7 @@ def main():
     preds = cnty[KEYS].copy()
     preds["actual_next_1m"] = cnty["target_next_1m"]
     preds["actual_next_12m"] = cnty["target_next_12m"]
-    cnty_band = cnty["prvdr_county"].map(county_2024).fillna(0).map(size_band)
+    cnty_band = county_band_series(cnty, county_2024, "county frame")
     cnty_tasks = task_masks(cnty["month"])
     for task, spec in cnty_tasks.items():
         y = cnty[spec["target"]].to_numpy(dtype="float32")
@@ -367,7 +367,7 @@ def main():
 
     log("building divergence summary (validation months)")
     div_rows = []
-    band_col = preds["prvdr_county"].map(county_2024).fillna(0).map(size_band)
+    band_col = county_band_series(preds, county_2024, "predictions frame")
     val_months = {"next_1m": (preds["month"] >= A_VAL_START) & (preds["month"] <= A_VAL_END),
                   "next_12m": preds["month"] == B_VAL_MONTH}
     for task, mask in val_months.items():
