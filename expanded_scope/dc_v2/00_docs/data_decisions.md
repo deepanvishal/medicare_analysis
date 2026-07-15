@@ -376,6 +376,14 @@ comparison), house style. Conclusions written back into this section.
 
 _To be filled after the analysis runs._
 
+### Mapped-filter verification (run 2026-07-15)
+
+Checked on anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.HCC_ICD_Mapping_2025:
+every ICD with HCC_v24 populated has is_pay_v24 = 'Yes' (10,211 rows); rows
+without an HCC are 'No' (1,373) or '-' (141). The two criteria are identical
+in this table. DECIDED: mapped = HCC_v24 IS NOT NULL. is_pay_v24 is not used
+as a filter anywhere (it also contains '-' values).
+
 ---
 
 ## DD 06 — Yearly vs Monthly Membership Input
@@ -396,9 +404,8 @@ its months. For future months, the last known year's number is used.
 
 ### Open
 
-Deepan to check whether a month-level membership number is available. If
-yes, and it is clean, switch the input to monthly. Until confirmed, build
-everything on yearly.
+RESOLVED by DD 08: EMIS_MEMBERSHIP is monthly-native (eff_dt = membership
+month). Monthly membership is the input; yearly is a rollup.
 
 ### Why it matters
 
@@ -408,4 +415,102 @@ themselves. Acceptable for MVP.
 
 ### Conclusion
 
-_Pending monthly availability check._
+Monthly membership available natively (DD 08). Forecast gets a real monthly
+member line.
+
+---
+
+## DD 07 — Claims Extract Columns, Diagnosis Scope, Visit Definition
+
+**Folder:** `expanded_scope/dc_v2/07_data_decisions/dd_07_claims_extract/`
+**Status:** DECIDED
+**Owner:** Deepan
+
+### Decisions
+
+1. **Columns kept in the 3-year claims extract (9):** member_id, age_nbr,
+   srv_start_dt, pri_icd9_dx_cd, epdb_dw_prvdr_id (resolved via the <10 case
+   logic at extract time), specialty_ctg_cd, prvdr_county, allowed_amt,
+   business_ln_cd. business_ln_cd is dropped after the CP/ME filter is
+   applied at build (8 columns final). All descriptions, TIN fields, revenue
+   codes, submarket, zip, gender dropped — rejoinable from reference tables
+   if ever needed.
+2. **Diagnosis scope: PRIMARY ONLY (pri_icd9_dx_cd).** Secondary diagnosis
+   positions are not used. Known consequence, accepted: chronic prevalence
+   will undercount conditions coded in secondary positions. MVP decision;
+   revisit only if h1 coverage numbers come back too low.
+3. **Visit definition: unchanged from v1 — one visit = one distinct
+   member x provider x service date.** No procedure-code or
+   place-of-service filtering. prcdr_cd, plc_srv_cd, claim_line_id therefore
+   not needed in the extract.
+
+### Why it matters
+
+3-year extract must stay small. Every column and every widening decision
+(secondary dx, procedure filtering) multiplies size for signal we chose not
+to use in MVP.
+
+### Conclusion
+
+Decided as above for design intent. ACTUAL extract as built: window
+2023-01-01 to 2025-12-31 (3 years), all original columns retained except
+prcdr_dscrptn and plc_srv_ctg_cd (commented out). The 9-column trim is not
+applied physically; downstream notebooks read only the DD 07 keep-list
+columns. If table size becomes a problem, apply the trim then. Source:
+EMIS_CLAIM_LINE joined to members extract, provider resolution via
+epdb_dw_prvdr_id case logic, county from PROVIDER_DM.
+
+---
+
+## DD 08 — Membership Source and Geography Chain
+
+**Folder:** `expanded_scope/dc_v2/07_data_decisions/dd_08_membership_source/`
+**Status:** DECIDED
+**Owner:** Deepan
+
+### Source
+
+`edp-prod-hcbstorage.edp_hcb_core_cnsv.EMIS_MEMBERSHIP`
+
+Columns of use: member_id, age_nbr, eff_dt, gender_cd, member_county_cd,
+zip_cd.
+
+### Meaning of eff_dt (critical)
+
+eff_dt here IS the membership month. One row = this member was enrolled in
+that year-month. Member count for a month = count of rows for that month.
+It is NOT an effective-start date; no date-range expansion. This gives
+monthly membership natively — DD 06 upgrades: monthly is available, yearly
+is a rollup of it.
+
+### Filters
+
+- LOB: business_ln_cd in CP and ME (locked fact, confirmed again).
+- medical_ind = 'Y'.
+- Years 2023, 2024, 2025.
+
+### Geography chain (house-accepted logic, treated as deduped)
+
+From base_001_utlis.sql in analytics-org_NICC_Medicare:
+
+EMIS_MEMBERSHIP a
+ -> MDCR_MBR_SUPP b   on member_id, a.eff_dt BETWEEN b.eff_dt AND b.cncl_dt
+ -> ZIP_X_ST_X_COUNTY c   on a.zip_cd = c.zip_cd   (county, state)
+ -> MA_CT_fips_changes_xwalk c2   on c.county_cd = c2.fips_new
+ -> STATE_X_COUNTY d   (county name)
+ -> mdcr_base_market e   on COALESCE(c2.fips_old, c.county_cd) = e.county_cd
+                          (market, submarket)
+
+Usage rule: prefer native county where present; use the zip->county chain
+where only zip exists; use the county->market/submarket chain where
+market/submarket is missing.
+
+### Feeds
+
+Notebook 45 (membership profile), notebook 46 (demand history table —
+member county attribution comes from here).
+
+### Conclusion
+
+Decided as above. Membership is monthly-native; demand denominator and
+member-side geography both come from this source and chain.
