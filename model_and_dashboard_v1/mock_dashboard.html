@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meridian County — What-If Mock (phase 1)</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --series-1:       #2a78d6;   /* sequential blue / decrease arm */
+    --delta-up:       #e34948;   /* diverging warm arm = demand increase */
+    --delta-down:     #2a78d6;   /* diverging cool arm = demand decrease */
+    --status-good:    #0ca30c;
+    --status-warn:    #fab219;
+    --status-crit:    #d03b3b;
+    --good-tint:      rgba(12,163,12,0.12);
+    --warn-tint:      rgba(250,178,25,0.18);
+    --crit-tint:      rgba(208,59,59,0.14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --series-1:       #3987e5;
+      --delta-up:       #e66767;
+      --delta-down:     #3987e5;
+      --status-good:    #0ca30c;
+      --status-warn:    #fab219;
+      --status-crit:    #d03b3b;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:           #0d0d0d;
+    --surface-1:      #1a1a19;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --grid:           #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --series-1:       #3987e5;
+    --delta-up:       #e66767;
+    --delta-down:     #3987e5;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: var(--text-secondary); margin: 0 0 20px; font-size: 13px; }
+  .mock-flag {
+    display: inline-block; margin-left: 8px; padding: 1px 8px;
+    border: 1px solid var(--border); border-radius: 10px;
+    font-size: 11px; color: var(--text-muted); vertical-align: 2px;
+  }
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px 18px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 13px; margin: 0 0 4px; text-transform: uppercase;
+             letter-spacing: .04em; color: var(--text-secondary); }
+  .caption { font-size: 12px; color: var(--text-muted); margin: 2px 0 12px; }
+
+  /* stat tiles */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+           gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--surface-1); border: 1px solid var(--border);
+          border-radius: 10px; padding: 12px 16px; }
+  .tile .lbl { font-size: 12px; color: var(--text-secondary); }
+  .tile .val { font-size: 26px; font-weight: 650; margin-top: 2px; }
+  .tile .dlt { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
+  /* sliders */
+  .sliders { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 32px; }
+  .slider-row { display: grid; grid-template-columns: 150px 1fr 120px;
+                align-items: center; gap: 12px; padding: 4px 0; }
+  .slider-row label { font-size: 13px; }
+  .slider-row .readout { font-size: 13px; text-align: right;
+                         font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+  input[type=range] { width: 100%; accent-color: var(--series-1); }
+  .master label { font-weight: 650; }
+  button.reset {
+    margin-top: 10px; padding: 5px 14px; font: inherit; font-size: 13px;
+    background: none; border: 1px solid var(--border); border-radius: 7px;
+    color: var(--text-primary); cursor: pointer;
+  }
+  button.reset:hover { background: var(--grid); }
+
+  /* tables */
+  table { border-collapse: collapse; width: 100%; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase;
+       letter-spacing: .04em; color: var(--text-muted); font-weight: 600;
+       padding: 6px 10px; border-bottom: 1px solid var(--grid); }
+  th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td { padding: 7px 10px; border-bottom: 1px solid var(--grid); font-size: 13px; }
+  tr:hover td { background: color-mix(in srgb, var(--series-1) 6%, transparent); }
+  tr:last-child td { border-bottom: none; }
+
+  /* diverging delta bar: gray midpoint, warm = increase, cool = decrease */
+  .dbar { position: relative; width: 170px; height: 8px; }
+  .dbar .mid { position: absolute; left: 50%; top: -3px; width: 2px; height: 14px;
+               background: var(--baseline); }
+  .dbar .bar { position: absolute; top: 0; height: 8px; border-radius: 4px; }
+
+  /* capacity meter */
+  .meter { position: relative; width: 150px; height: 8px;
+           background: var(--grid); border-radius: 4px; }
+  .meter .fill { position: absolute; left: 0; top: 0; height: 8px;
+                 background: var(--series-1); border-radius: 4px; }
+  .meter .over { position: absolute; top: 0; height: 8px;
+                 background: var(--status-crit); border-radius: 0 4px 4px 0;
+                 border-left: 2px solid var(--surface-1); }
+  .util { font-size: 12px; color: var(--text-secondary);
+          font-variant-numeric: tabular-nums; }
+
+  /* status chips: icon + label, never color alone */
+  .chip { display: inline-flex; align-items: center; gap: 5px;
+          padding: 2px 9px; border-radius: 10px; font-size: 12px; font-weight: 600;
+          color: var(--text-primary); }
+  .chip .ic { font-size: 11px; }
+  .chip.good { background: var(--good-tint); }
+  .chip.good .ic { color: var(--status-good); }
+  .chip.warn { background: var(--warn-tint); }
+  .chip.warn .ic { color: var(--status-warn); }
+  .chip.crit { background: var(--crit-tint); }
+  .chip.crit .ic { color: var(--status-crit); }
+
+  details { margin-top: 4px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); }
+  details pre { font-size: 12px; background: var(--page); border: 1px solid var(--border);
+                border-radius: 8px; padding: 12px; overflow-x: auto; }
+  .footer-note { font-size: 12px; color: var(--text-muted); margin-top: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Meridian County — enrollment what-if
+    <span class="mock-flag">MOCK DATA — phase 1 mechanics test</span></h1>
+  <p class="sub">2025 actuals below are fictional. Move the sliders; every number
+    downstream is recomputed from hardcoded rate tables — enrollment &rarr; disease
+    prevalence &rarr; specialty utilization &rarr; provider routing &rarr; capacity flags.</p>
+
+  <div class="tiles">
+    <div class="tile"><div class="lbl">Scenario enrollment</div>
+      <div class="val" id="t-enroll"></div><div class="dlt" id="t-enroll-d"></div></div>
+    <div class="tile"><div class="lbl">Scenario annual visits (all specialties)</div>
+      <div class="val" id="t-visits"></div><div class="dlt" id="t-visits-d"></div></div>
+    <div class="tile"><div class="lbl">Providers over capacity</div>
+      <div class="val" id="t-over"></div><div class="dlt" id="t-over-d"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>Scenario controls</h2>
+    <p class="caption">Master spreads across all bands proportionally; each override
+      shifts one band on top of the master. Effective band change = master + override.</p>
+    <div class="sliders">
+      <div class="slider-row master">
+        <label for="s-master">Master: total enrollment</label>
+        <input type="range" id="s-master" min="-30" max="30" value="0" step="1">
+        <span class="readout" id="r-master"></span>
+      </div>
+      <div></div>
+      <div class="slider-row">
+        <label for="s-b0">Override: 65–74</label>
+        <input type="range" id="s-b0" min="-30" max="30" value="0" step="1">
+        <span class="readout" id="r-b0"></span>
+      </div>
+      <div class="slider-row">
+        <label for="s-b1">Override: 75–84</label>
+        <input type="range" id="s-b1" min="-30" max="30" value="0" step="1">
+        <span class="readout" id="r-b1"></span>
+      </div>
+      <div class="slider-row">
+        <label for="s-b2">Override: 85+</label>
+        <input type="range" id="s-b2" min="-30" max="30" value="0" step="1">
+        <span class="readout" id="r-b2"></span>
+      </div>
+    </div>
+    <button class="reset" id="btn-reset">Reset to baseline</button>
+  </div>
+
+  <div class="card">
+    <h2>Demand by specialty</h2>
+    <p class="caption">Annual visits = &Sigma; band enrollment &times; condition prevalence
+      &times; condition-to-specialty visit rate. Bar shows the change vs baseline
+      (warm = more demand, cool = less).</p>
+    <table id="tbl-spec">
+      <thead><tr>
+        <th>Specialty</th><th class="num">Baseline visits</th>
+        <th class="num">Scenario visits</th><th class="num">Delta</th><th>Delta vs baseline</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Provider load vs capacity</h2>
+    <p class="caption">Each specialty's scenario demand is routed to its providers by
+      intake weight. Load meter = scenario load / capacity ceiling; the red segment is
+      volume past the ceiling. At capacity = 90% or more.</p>
+    <table id="tbl-prov">
+      <thead><tr>
+        <th>Provider</th><th>Specialty</th><th class="num">Intake wt</th>
+        <th class="num">Baseline load</th><th class="num">Scenario load</th>
+        <th class="num">Ceiling</th><th>Load</th><th class="num">Util</th><th>Status</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Mock coefficients</h2>
+    <details>
+      <summary>Show the hardcoded rate tables this page computes from</summary>
+      <pre id="coef-dump"></pre>
+    </details>
+  </div>
+
+  <p class="footer-note">Phase 1 mock: fictional county, hardcoded coefficients, no
+    data connections. If the cascade feels right, real model extracts replace the
+    CONFIG block in a later phase.</p>
+</div>
+
+<script>
+"use strict";
+
+/* ============================== CONFIG ==================================
+   ALL mock coefficients live in this block and nowhere else. In a later
+   phase, model extracts (Models A/B/C rate tables) replace this block;
+   everything below it is pure arithmetic and does not change.
+   ======================================================================== */
+const CONFIG = {
+  county: "Meridian County (fictional)",
+  bands: ["65-74", "75-84", "85+"],
+  baselineEnrollment: [12000, 7000, 3000],
+
+  conditions: ["Routine care", "Hypertension", "Diabetes", "CKD", "Arthritis"],
+  // prevalence[band][condition] -- share of the band's members with the condition
+  prevalence: [
+    [1.00, 0.55, 0.28, 0.10, 0.30],   // 65-74
+    [1.00, 0.65, 0.32, 0.18, 0.42],   // 75-84
+    [1.00, 0.72, 0.30, 0.26, 0.50],   // 85+
+  ],
+
+  specialties: ["Primary Care", "Cardiology", "Nephrology", "Orthopedics"],
+  // utilization[condition][specialty] -- annual visits per affected member
+  utilization: [
+    [2.0, 0.0, 0.0, 0.0],   // Routine care
+    [1.0, 0.8, 0.1, 0.0],   // Hypertension
+    [1.2, 0.5, 0.4, 0.1],   // Diabetes
+    [0.5, 0.4, 2.5, 0.0],   // CKD
+    [0.3, 0.0, 0.0, 1.6],   // Arthritis
+  ],
+
+  // 10 mock providers: specialty index, intake weight (share of that
+  // specialty's demand), annual capacity ceiling (visits)
+  providers: [
+    { name: "Lakeside Primary Group",   spec: 0, weight: 0.45, ceiling: 34000 },
+    { name: "Oak Street Family Med",    spec: 0, weight: 0.35, ceiling: 30000 },
+    { name: "Community Health Assoc",   spec: 0, weight: 0.20, ceiling: 16000 },
+    { name: "Meridian Heart Center",    spec: 1, weight: 0.50, ceiling: 8000 },
+    { name: "Riverside Cardiology",     spec: 1, weight: 0.30, ceiling: 6500 },
+    { name: "Pulse Cardiovascular",     spec: 1, weight: 0.20, ceiling: 3600 },
+    { name: "Kidney Care Partners",     spec: 2, weight: 0.60, ceiling: 7600 },
+    { name: "Renal Associates",         spec: 2, weight: 0.40, ceiling: 6200 },
+    { name: "Summit Orthopedics",       spec: 3, weight: 0.55, ceiling: 9200 },
+    { name: "Motion Ortho Clinic",      spec: 3, weight: 0.45, ceiling: 6400 },
+  ],
+};
+/* ============================ end CONFIG ================================ */
+
+const fmt = n => Math.round(n).toLocaleString("en-US");
+const sgn = n => (n >= 0 ? "+" : "−") + fmt(Math.abs(n));
+
+// enrollment -> visits per specialty (the demand cascade)
+function demandBySpecialty(enrollment) {
+  const out = CONFIG.specialties.map(() => 0);
+  for (let b = 0; b < CONFIG.bands.length; b++) {
+    for (let c = 0; c < CONFIG.conditions.length; c++) {
+      const affected = enrollment[b] * CONFIG.prevalence[b][c];
+      for (let s = 0; s < CONFIG.specialties.length; s++) {
+        out[s] += affected * CONFIG.utilization[c][s];
+      }
+    }
+  }
+  return out;
+}
+
+const BASE_ENROLL = CONFIG.baselineEnrollment;
+const BASE_DEMAND = demandBySpecialty(BASE_ENROLL);
+
+function readSliders() {
+  const master = +document.getElementById("s-master").value;
+  const over = [0, 1, 2].map(i => +document.getElementById("s-b" + i).value);
+  return { master, over };
+}
+
+function scenarioEnrollment({ master, over }) {
+  return BASE_ENROLL.map((e, i) =>
+    Math.max(0, e * (1 + (master + over[i]) / 100)));
+}
+
+function statusOf(load, ceiling) {
+  const u = load / ceiling;
+  if (u > 1.0)  return { cls: "crit", ic: "✖", label: "Over capacity" };
+  if (u >= 0.9) return { cls: "warn", ic: "▲", label: "At capacity" };
+  return { cls: "good", ic: "✓", label: "Headroom" };
+}
+
+function render() {
+  const sl = readSliders();
+  document.getElementById("r-master").textContent =
+    (sl.master >= 0 ? "+" : "") + sl.master + "% all bands";
+  const enroll = scenarioEnrollment(sl);
+  [0, 1, 2].forEach(i => {
+    document.getElementById("r-b" + i).textContent =
+      (sl.over[i] >= 0 ? "+" : "") + sl.over[i] + " pp → " + fmt(enroll[i]);
+  });
+
+  const demand = demandBySpecialty(enroll);
+  const totBase = BASE_DEMAND.reduce((a, b) => a + b, 0);
+  const totNew = demand.reduce((a, b) => a + b, 0);
+  const enrollBase = BASE_ENROLL.reduce((a, b) => a + b, 0);
+  const enrollNew = enroll.reduce((a, b) => a + b, 0);
+
+  document.getElementById("t-enroll").textContent = fmt(enrollNew);
+  document.getElementById("t-enroll-d").textContent =
+    sgn(enrollNew - enrollBase) + " vs baseline " + fmt(enrollBase);
+  document.getElementById("t-visits").textContent = fmt(totNew);
+  document.getElementById("t-visits-d").textContent =
+    sgn(totNew - totBase) + " vs baseline " + fmt(totBase);
+
+  // specialty table with diverging delta bars
+  const deltas = demand.map((d, s) => d - BASE_DEMAND[s]);
+  const maxAbs = Math.max(1, ...deltas.map(Math.abs));
+  const specBody = document.querySelector("#tbl-spec tbody");
+  specBody.innerHTML = "";
+  CONFIG.specialties.forEach((name, s) => {
+    const d = deltas[s];
+    const half = 83;                        // px, half of the 170px dbar less midpoint
+    const w = Math.round(Math.abs(d) / maxAbs * half);
+    const bar = d >= 0
+      ? `<div class="bar" style="left:85px;width:${w}px;background:var(--delta-up)"></div>`
+      : `<div class="bar" style="left:${85 - w}px;width:${w}px;background:var(--delta-down)"></div>`;
+    specBody.insertAdjacentHTML("beforeend",
+      `<tr title="${name}: ${fmt(BASE_DEMAND[s])} baseline → ${fmt(demand[s])} scenario (${sgn(d)})">
+         <td>${name}</td>
+         <td class="num">${fmt(BASE_DEMAND[s])}</td>
+         <td class="num">${fmt(demand[s])}</td>
+         <td class="num">${sgn(d)}</td>
+         <td><div class="dbar"><div class="mid"></div>${d !== 0 ? bar : ""}</div></td>
+       </tr>`);
+  });
+
+  // provider table
+  const provBody = document.querySelector("#tbl-prov tbody");
+  provBody.innerHTML = "";
+  let nOver = 0, nAt = 0;
+  CONFIG.providers.forEach(p => {
+    const baseLoad = p.weight * BASE_DEMAND[p.spec];
+    const newLoad = p.weight * demand[p.spec];
+    const util = newLoad / p.ceiling;
+    const st = statusOf(newLoad, p.ceiling);
+    if (st.cls === "crit") nOver++;
+    if (st.cls === "warn") nAt++;
+    const fillPct = Math.min(util, 1) * 100;
+    const overPct = util > 1 ? Math.min(util - 1, 0.30) * 100 : 0;
+    provBody.insertAdjacentHTML("beforeend",
+      `<tr title="${p.name}: ${fmt(newLoad)} of ${fmt(p.ceiling)} visits (${Math.round(util * 100)}%)">
+         <td>${p.name}</td>
+         <td>${CONFIG.specialties[p.spec]}</td>
+         <td class="num">${(p.weight * 100).toFixed(0)}%</td>
+         <td class="num">${fmt(baseLoad)}</td>
+         <td class="num">${fmt(newLoad)}</td>
+         <td class="num">${fmt(p.ceiling)}</td>
+         <td><div class="meter">
+               <div class="fill" style="width:${(fillPct * 0.77).toFixed(1)}%"></div>
+               ${overPct > 0 ? `<div class="over" style="left:77%;width:${(overPct * 0.77).toFixed(1)}%"></div>` : ""}
+             </div></td>
+         <td class="num util">${Math.round(util * 100)}%</td>
+         <td><span class="chip ${st.cls}"><span class="ic">${st.ic}</span>${st.label}</span></td>
+       </tr>`);
+  });
+
+  document.getElementById("t-over").textContent = nOver + " of " + CONFIG.providers.length;
+  document.getElementById("t-over-d").textContent = nAt + " more at capacity (≥90%)";
+}
+
+document.querySelectorAll("input[type=range]").forEach(el =>
+  el.addEventListener("input", render));
+document.getElementById("btn-reset").addEventListener("click", () => {
+  document.querySelectorAll("input[type=range]").forEach(el => { el.value = 0; });
+  render();
+});
+
+document.getElementById("coef-dump").textContent =
+  JSON.stringify(CONFIG, null, 2);
+render();
+</script>
+</body>
+</html>
