@@ -1,7 +1,8 @@
 import os
 
 import pandas as pd
-from dash import Dash, Input, Output, dash_table, dcc, html
+import plotly.graph_objects as go
+from dash import Dash, Input, Output, State, ctx, dash_table, dcc, html, no_update
 
 # ============================== CONFIG ==================================
 # All values in this section are fictional mock data; real model extracts
@@ -10,6 +11,9 @@ COUNTY = "TEST_COUNTY_FL"
 BASELINE_ENROLLMENT = 40000
 BANDS = ["65-74", "75-84", "85+"]
 BAND_SHARES = [0.55, 0.33, 0.12]
+
+MASTER_DEFAULT = 3
+BAND_DEFAULTS = [2, 3, 6]
 
 CONDITIONS = ["Diabetes", "CHF", "CKD", "COPD", "Osteoarthritis"]
 PREVALENCE = [
@@ -54,9 +58,12 @@ PROVIDERS = [
 
 BASE_BAND_ENROLLMENT = [BASELINE_ENROLLMENT * s for s in BAND_SHARES]
 
+GRAY = "#c3c2b7"
+GREEN = "#0ca30c"
 
-def band_enrollment(master_pct, band_pcts):
-    return [max(0.0, e * (1 + (master_pct + band_pcts[i]) / 100.0))
+
+def band_enrollment(band_pcts):
+    return [max(0.0, e * (1 + band_pcts[i] / 100.0))
             for i, e in enumerate(BASE_BAND_ENROLLMENT)]
 
 
@@ -71,8 +78,14 @@ def demand_by_specialty(enrollment):
     return demand
 
 
-BASELINE_BANDS = band_enrollment(0, [0, 0, 0])
+def condition_members(enrollment):
+    return [sum(enrollment[b] * PREVALENCE[b][c] for b in range(len(BANDS)))
+            for c in range(len(CONDITIONS))]
+
+
+BASELINE_BANDS = band_enrollment([0, 0, 0])
 BASELINE_DEMAND = demand_by_specialty(BASELINE_BANDS)
+BASELINE_CONDITIONS = condition_members(BASELINE_BANDS)
 
 
 def fmt(n):
@@ -118,19 +131,25 @@ else:
     app = Dash(__name__)
 
 SCOPE_TEXT = [
-    "This dashboard simulates enrollment scenarios for one county. The master "
-    "slider shifts total enrollment, spread across the demographic bands "
-    "proportionally. The band sliders add demographic skew on top of the master "
-    "- for example, what if the 85+ band grew faster than the rest.",
-    "Every slider move recomputes demand through the same chain: band enrollment "
-    "times condition prevalence gives members with each condition; condition "
-    "visit rates translate that into annual visits per specialty. New demand is "
-    "then routed to providers by their intake weight, and each provider's new "
-    "load is compared against their capacity ceiling to flag headroom, at "
-    "capacity, or over capacity.",
-    "All data on this page is fictional. In a later phase, the models supply "
-    "real coefficients and this page's layout does not change.",
+    "This tool is directional, not a precise forecaster. It exists to show which "
+    "way demand and provider load move under an enrollment scenario, and roughly "
+    "by how much - not to predict exact visit counts.",
+    "Capacity is Aetna-relative: only Aetna claims are visible, so a provider who "
+    "is busy with other payers may look like they have room here when they do not.",
+    "Routing assumes future patients choose providers the way past patients did - "
+    "new demand flows to each provider in proportion to their historical intake. "
+    "Prevalence and visit rates are frozen during simulation; the sliders move "
+    "enrollment only.",
+    "All numbers on this page are fictional mock values. In a later phase, the "
+    "models supply real coefficients and this page's layout does not change.",
 ]
+
+
+def expected_marks(base_marks, default_value):
+    marks = dict(base_marks)
+    marks[default_value] = {"label": "expected",
+                            "style": {"color": "#2a78d6", "fontWeight": "600"}}
+    return marks
 
 
 def kpi_tile(tile_id, label):
@@ -144,11 +163,11 @@ def kpi_tile(tile_id, label):
                     ])
 
 
-def slider_block(slider_id, readout_id, label, mn, mx, marks):
-    return html.Div(style={"marginBottom": "14px"}, children=[
+def slider_block(slider_id, readout_id, label, mn, mx, marks, default_value):
+    return html.Div(style={"marginBottom": "16px"}, children=[
         html.Label(label, style={"fontSize": "13px", "fontWeight": "600"}),
-        dcc.Slider(id=slider_id, min=mn, max=mx, step=5, value=0, marks=marks,
-                   tooltip={"placement": "bottom"}),
+        dcc.Slider(id=slider_id, min=mn, max=mx, step=5, value=default_value,
+                   marks=marks, tooltip={"placement": "bottom"}),
         html.Div(id=readout_id, style={"fontSize": "12px", "color": "#52514e"}),
     ])
 
@@ -157,6 +176,7 @@ app.layout = html.Div(
     style={"maxWidth": "1200px", "margin": "0 auto", "padding": "16px",
            "fontFamily": "system-ui, sans-serif"},
     children=[
+        dcc.Store(id="store-sync", data=None),
         html.Div("MOCK DATA - phase 1 mechanics test",
                  style={"background": "#fab219", "color": "#0b0b0b",
                         "fontWeight": "700", "textAlign": "center",
@@ -184,21 +204,33 @@ app.layout = html.Div(
                                      "border": "1px solid rgba(11,11,11,0.10)",
                                      "borderRadius": "10px", "padding": "14px"},
                               children=[
-                                  slider_block("s-master", "r-master",
-                                               "Master: total enrollment (%)",
-                                               -30, 50,
-                                               {-30: "-30", 0: "0", 25: "+25", 50: "+50"}),
-                                  slider_block("s-b0", "r-b0", "Band 65-74 (+pp)",
-                                               -30, 100,
-                                               {-30: "-30", 0: "0", 50: "+50", 100: "+100"}),
-                                  slider_block("s-b1", "r-b1", "Band 75-84 (+pp)",
-                                               -30, 100,
-                                               {-30: "-30", 0: "0", 50: "+50", 100: "+100"}),
-                                  slider_block("s-b2", "r-b2", "Band 85+ (+pp)",
-                                               -30, 100,
-                                               {-30: "-30", 0: "0", 50: "+50", 100: "+100"}),
-                                  html.Div("Band sliders are additive on top of the "
-                                           "master slider.",
+                                  slider_block(
+                                      "s-master", "r-master",
+                                      "Master: total enrollment (%)", -30, 50,
+                                      expected_marks({-30: "-30", 0: "0", 25: "+25",
+                                                      50: "+50"}, MASTER_DEFAULT),
+                                      MASTER_DEFAULT),
+                                  slider_block(
+                                      "s-b0", "r-b0", "Band 65-74 (%)", -30, 100,
+                                      expected_marks({-30: "-30", 0: "0", 50: "+50",
+                                                      100: "+100"}, BAND_DEFAULTS[0]),
+                                      BAND_DEFAULTS[0]),
+                                  slider_block(
+                                      "s-b1", "r-b1", "Band 75-84 (%)", -30, 100,
+                                      expected_marks({-30: "-30", 0: "0", 50: "+50",
+                                                      100: "+100"}, BAND_DEFAULTS[1]),
+                                      BAND_DEFAULTS[1]),
+                                  slider_block(
+                                      "s-b2", "r-b2", "Band 85+ (%)", -30, 100,
+                                      expected_marks({-30: "-30", 0: "0", 50: "+50",
+                                                      100: "+100"}, BAND_DEFAULTS[2]),
+                                      BAND_DEFAULTS[2]),
+                                  html.Div("Moving the master sets every band to its "
+                                           "value; band sliders then adjust one band "
+                                           "at a time.",
+                                           style={"fontSize": "12px",
+                                                  "color": "#898781"}),
+                                  html.Div("Defaults are mocked forecast values.",
                                            style={"fontSize": "12px",
                                                   "color": "#898781"}),
                               ]),
@@ -218,6 +250,17 @@ app.layout = html.Div(
                                       ["band", "baseline", "scenario", "delta",
                                        "pct_change"]],
                              **TABLE_STYLE),
+                         html.H4("Condition mix"),
+                         html.Div("Members can have multiple conditions; column does "
+                                  "not sum to enrollment.",
+                                  style={"fontSize": "12px", "color": "#898781",
+                                         "marginBottom": "6px"}),
+                         dash_table.DataTable(
+                             id="tbl-condition",
+                             columns=[{"name": c, "id": c} for c in
+                                      ["condition", "baseline_members",
+                                       "scenario_members", "delta", "pct_change"]],
+                             **TABLE_STYLE),
                          html.H4("Demand by specialty"),
                          html.Div(style={"maxWidth": "420px",
                                          "marginBottom": "8px"},
@@ -225,6 +268,8 @@ app.layout = html.Div(
                                       dcc.Dropdown(id="dd-specialty",
                                                    options=SPECIALTIES,
                                                    value=SPECIALTIES, multi=True)]),
+                         dcc.Graph(id="fig-demand",
+                                   config={"displayModeBar": False}),
                          dash_table.DataTable(
                              id="tbl-demand",
                              columns=[{"name": c, "id": c} for c in
@@ -236,8 +281,8 @@ app.layout = html.Div(
                              id="tbl-provider",
                              columns=[{"name": c, "id": c} for c in
                                       ["provider", "specialty", "current_visits",
-                                       "scenario_load", "ceiling",
-                                       "utilization_pct", "status"]],
+                                       "estimated_max", "new_demand_coming",
+                                       "room_left", "status"]],
                              style_data_conditional=[
                                  {"if": {"filter_query": '{status} = "HEADROOM"',
                                          "column_id": "status"},
@@ -277,7 +322,54 @@ app.layout = html.Div(
     ])
 
 
+def build_demand_figure(selected, demand):
+    fig = go.Figure()
+    names, base_seg, grow_seg, labels, label_y, dash_x, dash_y = [], [], [], [], [], [], []
+    idx = 0
+    for s, name in enumerate(SPECIALTIES):
+        if name not in selected:
+            continue
+        base = BASELINE_DEMAND[s]
+        scen = demand[s]
+        delta = scen - base
+        names.append(name)
+        if scen >= base:
+            base_seg.append(base)
+            grow_seg.append(delta)
+        else:
+            base_seg.append(scen)
+            grow_seg.append(0)
+            dash_x.extend([idx - 0.35, idx + 0.35, None])
+            dash_y.extend([base, base, None])
+        labels.append(f"{fmt(scen)} ({delta:+,.0f})")
+        label_y.append(max(scen, base))
+        idx += 1
+    x = list(range(len(names)))
+    fig.add_trace(go.Bar(x=x, y=base_seg, marker_color=GRAY, name="Baseline"))
+    fig.add_trace(go.Bar(x=x, y=grow_seg, marker_color=GREEN, name="Growth"))
+    if dash_x:
+        fig.add_trace(go.Scatter(x=dash_x, y=dash_y, mode="lines",
+                                 line={"color": "#52514e", "dash": "dash",
+                                       "width": 2},
+                                 name="Baseline level"))
+    for i, lbl in enumerate(labels):
+        fig.add_annotation(x=x[i], y=label_y[i], text=lbl, showarrow=False,
+                           yshift=12, font={"size": 11})
+    fig.update_layout(barmode="stack", height=320,
+                      margin={"l": 40, "r": 10, "t": 10, "b": 30},
+                      xaxis={"tickvals": x, "ticktext": names},
+                      yaxis={"title": "Annual visits"},
+                      legend={"orientation": "h", "y": 1.12},
+                      plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb")
+    return fig
+
+
 @app.callback(
+    Output("s-master", "value"),
+    Output("s-b0", "value"),
+    Output("s-b1", "value"),
+    Output("s-b2", "value"),
+    Output("store-sync", "data"),
     Output("r-master", "children"),
     Output("r-b0", "children"),
     Output("r-b1", "children"),
@@ -287,23 +379,49 @@ app.layout = html.Div(
     Output("k-at", "children"),
     Output("k-over", "children"),
     Output("tbl-enroll", "data"),
+    Output("tbl-condition", "data"),
+    Output("fig-demand", "figure"),
     Output("tbl-demand", "data"),
     Output("tbl-provider", "data"),
     Input("s-master", "value"),
     Input("s-b0", "value"),
     Input("s-b1", "value"),
     Input("s-b2", "value"),
+    Input("btn-reset", "n_clicks"),
     Input("dd-specialty", "value"),
+    State("store-sync", "data"),
 )
-def update(master, b0, b1, b2, selected_specialties):
-    band_pcts = [b0 or 0, b1 or 0, b2 or 0]
-    master = master or 0
-    enrollment = band_enrollment(master, band_pcts)
+def update(master, b0, b1, b2, _reset_clicks, selected_specialties, sync_token):
+    trigger = ctx.triggered_id
+    master = master if master is not None else MASTER_DEFAULT
+    bands = [b0 if b0 is not None else BAND_DEFAULTS[0],
+             b1 if b1 is not None else BAND_DEFAULTS[1],
+             b2 if b2 is not None else BAND_DEFAULTS[2]]
+
+    slider_out = [no_update, no_update, no_update, no_update]
+    store_out = no_update
+    if trigger == "btn-reset":
+        bands = list(BAND_DEFAULTS)
+        slider_out = [MASTER_DEFAULT] + list(BAND_DEFAULTS)
+        store_out = MASTER_DEFAULT if master != MASTER_DEFAULT else None
+    elif trigger == "s-master":
+        if sync_token is not None and master == sync_token:
+            store_out = None
+        else:
+            bands = [master, master, master]
+            slider_out = [no_update, master, master, master]
+            store_out = None
+
+    enrollment = band_enrollment(bands)
     demand = demand_by_specialty(enrollment)
     deltas = [demand[s] - BASELINE_DEMAND[s] for s in range(len(SPECIALTIES))]
 
-    readout_master = f"All bands {master:+d}%"
-    readouts = [f"{BANDS[i]}: {fmt(enrollment[i])} members" for i in range(len(BANDS))]
+    total_enroll = sum(enrollment)
+    total_base = sum(BASELINE_BANDS)
+    readout_master = (f"Total: {fmt(total_enroll)} members "
+                      f"({pct((total_enroll - total_base) / total_base)} vs baseline)")
+    readouts = [f"{BANDS[i]}: {bands[i]:+d}% -> {fmt(enrollment[i])} members"
+                for i in range(len(BANDS))]
 
     enroll_rows = []
     for i, band in enumerate(BANDS):
@@ -312,6 +430,17 @@ def update(master, b0, b1, b2, selected_specialties):
         enroll_rows.append({
             "band": band, "baseline": fmt(base), "scenario": fmt(enrollment[i]),
             "delta": f"{d:+,.0f}", "pct_change": pct(d / base)})
+
+    cond_now = condition_members(enrollment)
+    condition_rows = []
+    for c, cond in enumerate(CONDITIONS):
+        d = cond_now[c] - BASELINE_CONDITIONS[c]
+        condition_rows.append({
+            "condition": cond,
+            "baseline_members": fmt(BASELINE_CONDITIONS[c]),
+            "scenario_members": fmt(cond_now[c]),
+            "delta": f"{d:+,.0f}",
+            "pct_change": pct(d / BASELINE_CONDITIONS[c])})
 
     selected = selected_specialties or []
     demand_rows = []
@@ -328,37 +457,29 @@ def update(master, b0, b1, b2, selected_specialties):
     provider_rows = []
     for p in PROVIDERS:
         s = SPECIALTIES.index(p["specialty"])
-        load = p["current_annual_visits"] + deltas[s] * p["intake_weight"]
+        new_demand = deltas[s] * p["intake_weight"]
+        load = p["current_annual_visits"] + new_demand
         utilization = load / p["capacity_ceiling"]
         status = status_of(utilization)
         if status == "AT CAPACITY":
             n_at += 1
         if status == "OVER CAPACITY":
             n_over += 1
+        room = p["capacity_ceiling"] - load
         if p["specialty"] in selected:
             provider_rows.append({
                 "provider": f'{p["id"]} {p["name"]}', "specialty": p["specialty"],
                 "current_visits": fmt(p["current_annual_visits"]),
-                "scenario_load": fmt(load), "ceiling": fmt(p["capacity_ceiling"]),
-                "utilization_pct": f"{utilization:.0%}", "status": status})
+                "estimated_max": f'~{fmt(p["capacity_ceiling"])}',
+                "new_demand_coming": f"{new_demand:+,.0f}",
+                "room_left": fmt(room) if room >= 0 else f"short by {fmt(-room)}",
+                "status": status})
 
-    total_enroll = sum(enrollment)
-    total_visits = sum(demand)
-    return (readout_master, readouts[0], readouts[1], readouts[2],
-            fmt(total_enroll), fmt(total_visits), str(n_at), str(n_over),
-            enroll_rows, demand_rows, provider_rows)
-
-
-@app.callback(
-    Output("s-master", "value"),
-    Output("s-b0", "value"),
-    Output("s-b1", "value"),
-    Output("s-b2", "value"),
-    Input("btn-reset", "n_clicks"),
-    prevent_initial_call=True,
-)
-def reset(_):
-    return 0, 0, 0, 0
+    figure = build_demand_figure(selected, demand)
+    return (slider_out[0], slider_out[1], slider_out[2], slider_out[3], store_out,
+            readout_master, readouts[0], readouts[1], readouts[2],
+            fmt(total_enroll), fmt(sum(demand)), str(n_at), str(n_over),
+            enroll_rows, condition_rows, figure, demand_rows, provider_rows)
 
 
 if __name__ == "__main__":
