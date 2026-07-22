@@ -75,14 +75,18 @@ Notebook numbers reference 00_MASTER_PLAN.md.
 
 Notebook 21_dashboard_extracts.py exports these coefficient tables. The
 dashboard reads ONLY these extracts; no other data source, no direct
-BigQuery access.
+BigQuery access. The demand formula is: members x sickness rates x
+visit rates x county calibration factor (D13) - at baseline the
+calibration factor makes the chain reproduce 2025 actuals exactly;
+slider deltas are shaped by the rate tables.
 
 | Extract | Grain | Content |
 |---|---|---|
 | enrollment_baseline | county x band | December-current member counts |
 | growth_defaults | county x band | context-label table, units percentage points: last year's Dec-to-Dec change shown beside each slider as "last year: +X%"; slider defaults are 0 per D11 and are never taken from this table |
 | sickness_rates | county x band x condition | prevalence fractions; feeds both the demand math and the condition display (D09) |
-| visit_rates | condition x specialty (plus the base rate for members with no mapped conditions) | per-condition annual visit rates from the visit-splitting model (D09) |
+| visit_rates | condition x specialty (plus the base rate for members with no mapped conditions) | per-condition annual visit rates from the visit-splitting model (D09), shipped as md1_visit_rates (08) |
+| county_calibration | county x specialty | md1_county_calibration (08): factor multiplied onto the demand chain per D13; baseline reproduces 2025 actuals, small cells shrunken toward the state factor, clamped 0.1..3.0 |
 | provider_profile | provider x specialty | current visits, intake share, modeled monthly and yearly ceiling |
 | county_reference | county | fips, name, state for dropdowns and labels |
 

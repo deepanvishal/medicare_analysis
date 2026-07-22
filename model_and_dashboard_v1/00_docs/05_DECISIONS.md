@@ -163,3 +163,26 @@ crosswalk.
 Alternatives considered: keeping the fan-out and deduplicating visits
 downstream in every consumer; rejected because each consumer would need
 the same dedupe and the rate-table grain would stay ambiguous.
+
+## D13 — [date]
+
+Decision: Accept the visit-split model with a county calibration layer.
+Context: post-dedupe validation (executed 15) returned reconstruction
+WAPE 27.27 percent, p90 57.8 - verdict REVIEW. Root cause: the split
+model's rates are national; county-level utilization varies with local
+practice patterns the model never sees. Anchor check remains advisory;
+stability PASS.
+Resolution: per county x specialty factor = actual 2025 bridged visits
+/ model-predicted 2025 visits, so the assembled chain reproduces 2025
+actuals exactly at baseline while the rate table shapes slider deltas.
+Standard post-stratification; planned as notebook 19's reconcile step,
+pulled forward into 08 (md1_county_calibration, beside the shipping
+rate table md1_visit_rates). Protections: cells under 500 actual visits
+shrink toward the state x specialty factor with weight n/(n+500); the
+final factor clamps to 0.1..3.0 with the clamped count printed. The
+demand formula becomes members x sickness rates x visit rates x county
+calibration factor.
+Alternatives considered: rejecting the model and fitting per-county
+rates; rejected - county-level fits would be data-starved exactly where
+calibration is weakest, and the national fit plus post-stratification
+keeps slider deltas condition-driven.
