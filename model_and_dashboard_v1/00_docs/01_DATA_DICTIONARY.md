@@ -9,6 +9,7 @@ Status labels used throughout:
 
 - VERIFIED-IN-CODE: the repo code reads or writes this column with this
   meaning.
+- VERIFIED-IN-BQ: confirmed by the user against live BigQuery.
 - INFERRED: the meaning is deduced from naming or context but no code
   proves it. The evidence is stated.
 - UNVERIFIED: mentioned in docs or comments only. Must be confirmed in
@@ -44,25 +45,28 @@ Claim-line extract for the demand/capacity work. Grain: one row per claim
 line (not per visit; visits are derived). Status: VERIFIED-IN-CODE as a
 table; the schema has TWO GENERATIONS in this repo (see conflict below).
 
-**CONFLICT — provider id and line id.** Older code (expanded_scope/30–38,
-demand_report.py, eda_runner.py) reads `srv_prvdr_id` and
-`claim_line_id`. Newer dc_v2 code (46, 48, 55, 57) reads
-`epdb_dw_prvdr_id` and never touches `claim_line_id`. dc_v2 docs say the
-extract was rebuilt with provider resolution via `epdb_dw_prvdr_id` case
-logic and a 2023-01-01 to 2025-12-31 window (source:
-expanded_scope/dc_v2/00_docs/data_decisions.md, DD 07). Which columns
-survive in the live table is a BigQuery check (Gaps #1).
+**CONFLICT — provider id and line id (OPEN).** Older code
+(expanded_scope/30–38, demand_report.py, eda_runner.py) reads
+`srv_prvdr_id` and `claim_line_id`. Newer dc_v2 code (46, 48, 55, 57)
+reads `epdb_dw_prvdr_id` and never touches `claim_line_id`. dc_v2 docs say
+the extract was rebuilt with provider resolution via `epdb_dw_prvdr_id`
+case logic (source: expanded_scope/dc_v2/00_docs/data_decisions.md,
+DD 07). User observation now says only `srv_prvdr_id` remains in the live
+table, which contradicts the working dc_v2 code. Recheck query added to
+01_checks/test_data.sql (GAP 1 RECHECK); the provider-ID choice for the
+visit key stays UNVERIFIED until it runs. The `srv_start_dt` window is
+settled: 2023-01-01 to 2025-12-31, VERIFIED-IN-BQ (Resolved gap 2).
 
 | Column | Type | Meaning | Status | Source |
 |---|---|---|---|---|
 | member_id | - | member identifier | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
-| epdb_dw_prvdr_id | - | provider identifier (rebuilt extract) | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
-| srv_prvdr_id | - | provider identifier (older extract generation) | VERIFIED-IN-CODE (older files only) | expanded_scope/32_dc_rate.py, demand_report.py |
-| claim_line_id | - | claim line identifier | VERIFIED-IN-CODE (older files only); presence post-rebuild UNVERIFIED | expanded_scope/32_dc_rate.py; dc_v2/00_docs/data_decisions.md DD 07 |
-| srv_start_dt | date-like (DATE_TRUNC works) | service date; the visit-key date | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
+| epdb_dw_prvdr_id | - | provider identifier (rebuilt extract per DD 07); user observation says it is ABSENT from the live table | UNVERIFIED pending GAP 1 recheck | dc_v2/03_demand/46_demand_history_table.py; user observation |
+| srv_prvdr_id | - | provider identifier (older extract generation); user observation says this is the one that remains | VERIFIED-IN-CODE (older files); presence per user observation, pending GAP 1 recheck | expanded_scope/32_dc_rate.py, demand_report.py; user observation |
+| claim_line_id | - | claim line identifier | VERIFIED-IN-CODE (older files only); presence post-rebuild UNVERIFIED (GAP 1 recheck lists all columns) | expanded_scope/32_dc_rate.py; dc_v2/00_docs/data_decisions.md DD 07 |
+| srv_start_dt | date-like (DATE_TRUNC works) | service date; the visit-key date; window 2023-01-01 to 2025-12-31 | VERIFIED-IN-CODE; window VERIFIED-IN-BQ | dc_v2/03_demand/46_demand_history_table.py; user confirmation (Resolved gap 2) |
 | pri_icd9_dx_cd | string-like (TRIM/REPLACE) | PRIMARY diagnosis code only; may carry dots | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
 | age_nbr | numeric | member age at claim | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
-| business_ln_cd | - | line of business; code filters IN ('CP','ME') and = 'ME'; full value set not proven | VERIFIED-IN-CODE (usage) | expanded_scope/32_dc_rate.py, 34_dc_book_utilization.py |
+| business_ln_cd | - | line of business; carries exactly two values, CP and ME | VERIFIED-IN-BQ (value set); VERIFIED-IN-CODE (usage) | user confirmation (Resolved gap 3); expanded_scope/32_dc_rate.py, 34_dc_book_utilization.py |
 | mbr_county_cd | code (LPAD to 5 works) | MEMBER county code — demand attribution | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
 | mbr_submarket | - | member submarket; formerly the scope filter, now retired | VERIFIED-IN-CODE (column exists) | dc_v2/03_demand/46_demand_history_table.py header |
 | prvdr_county | name string (UPPER/TRIM match) | PROVIDER county NAME — capacity attribution | VERIFIED-IN-CODE | dc_v2/04_capacity/48_provider_history_table.py |
@@ -108,19 +112,17 @@ partly INFERRED.
 - Older rule: a member present in this table is Medicare, else commercial
   — INFERRED (implemented as presence-join in demand_report.py; superseded
   in dc_v2 by business_ln_cd = 'ME').
-- **CONFLICT — date column name.** expanded_scope/dc_v2/00_docs/PLAN.md
-  states "eff_df is the membership date column (not eff_dt)". Working code
-  uses `eff_dt` (source: expanded_scope/eda_runner.py, after an explicit
-  correction; expanded_scope/30_dc_member_dim.py). dc_v2 docs say eff_dt
-  IS the membership month, one row per member-month (source:
-  data_decisions.md DD 08, which names the upstream EMIS_MEMBERSHIP).
-  Record: code says `eff_dt`; PLAN.md says `eff_df`; confirm in BigQuery
-  before new code touches it (Gaps #6).
+- **Date column SETTLED.** The column is `eff_dt`, and one row = one
+  member-month, both confirmed in BigQuery (Resolved gap 6). PLAN.md's
+  statement that "eff_df is the membership date column" is the historical
+  error (source: expanded_scope/dc_v2/00_docs/PLAN.md; working code in
+  expanded_scope/eda_runner.py and expanded_scope/30_dc_member_dim.py;
+  data_decisions.md DD 08).
 
 | Column | Type | Meaning | Status | Source |
 |---|---|---|---|---|
 | member_id | - | member identifier | VERIFIED-IN-CODE | expanded_scope/eda_runner.py |
-| eff_dt | date-like | membership month (one row = enrolled that month, per DD 08) | VERIFIED-IN-CODE (name), INFERRED (month semantics) | eda_runner.py; data_decisions.md DD 08 |
+| eff_dt | date-like | membership month; one row = enrolled that member-month | VERIFIED-IN-BQ | user confirmation (Resolved gap 6); eda_runner.py; data_decisions.md DD 08 |
 | state_postal_cd | - | member state ('FL' style) | VERIFIED-IN-CODE | expanded_scope/30_dc_member_dim.py |
 | county_nm | string | member county name (UPPERed before joining) | VERIFIED-IN-CODE | expanded_scope/30_dc_member_dim.py |
 | zip_cd | - | member zip | VERIFIED-IN-CODE | expanded_scope/30_dc_member_dim.py |
@@ -325,14 +327,15 @@ market_max_demand (source: dc_v2/06_weave/55_weave.py).
 
 ## 4. Known traps
 
-1. Membership date column conflict: PLAN.md says `eff_df`; working code
-   and DD 08 use/describe `eff_dt` on mdcr_base_membership. The A870800
-   membership EXTRACT uses `eff_yr`/`eff_mo` instead — three different
-   date shapes across membership sources (sources: dc_v2/00_docs/PLAN.md;
-   expanded_scope/eda_runner.py; dc_v2/03_demand/46_demand_history_table.py).
+1. Membership date column: SETTLED as `eff_dt` on mdcr_base_membership
+   (VERIFIED-IN-BQ, Resolved gap 6); PLAN.md's `eff_df` reference is the
+   historical error. The A870800 membership EXTRACT still uses
+   `eff_yr`/`eff_mo` instead — two different date shapes across membership
+   sources (sources: dc_v2/00_docs/PLAN.md; expanded_scope/eda_runner.py;
+   dc_v2/03_demand/46_demand_history_table.py).
 2. The claims table is named `_2025_claims` but holds a 2023-01-01 to
-   2025-12-31 window; dc_v2 code treats 2023 as lookback memory only
-   (sources: data_decisions.md DD 07;
+   2025-12-31 window (VERIFIED-IN-BQ, Resolved gap 2); dc_v2 code treats
+   2023 as lookback memory only (sources: data_decisions.md DD 07;
    dc_v2/03_demand/46_demand_history_table.py header).
 3. Provider id has two generations on the same claims table:
    `srv_prvdr_id` in older code, `epdb_dw_prvdr_id` in dc_v2 code (sources:
@@ -400,19 +403,20 @@ market_max_demand (source: dc_v2/06_weave/55_weave.py).
 
 ## 5. Gaps to verify in BigQuery
 
-1. `A870800_medicare_analysis_2025_claims`: post-rebuild schema — does
-   `claim_line_id` still exist, and are both `srv_prvdr_id` and
-   `epdb_dw_prvdr_id` present, or only the latter?
-2. Same table: actual MIN/MAX of `srv_start_dt` — is the window really
-   2023-01-01 to 2025-12-31 as DD 07 states?
-3. Same table: full distinct value set of `business_ln_cd` — only CP and
-   ME, or more?
+Check queries for the open gaps live in
+model_and_dashboard_v1/01_checks/test_data.sql.
+
+### Open
+
+1. `A870800_medicare_analysis_2025_claims`: user observation says only
+   `srv_prvdr_id` remains, which conflicts with working dc_v2 code
+   selecting `epdb_dw_prvdr_id`; recheck query added to test_data.sql
+   (GAP 1 RECHECK). The provider-ID choice for the visit key stays
+   UNVERIFIED until then. Also settles whether `claim_line_id` survives.
 4. Same table: `mbr_county_cd` format — 5-digit FIPS? Do AZ codes carry
    leading zeros as stored?
 5. Same table: distinct `prvdr_county` values — casing/format match rate
    against ms_ref_county.county_name under UPPER/TRIM.
-6. `mdcr_base_membership`: full column list — settle `eff_dt` vs `eff_df`;
-   confirm one row = member-month.
 7. `A870800_medicare_analysis_membership`: does `gender_cd` exist? What
    months does eff_yr/eff_mo actually cover, and are any months missing?
 8. `HCC_ICD_Mapping_2025`: confirm `HCC_v28`, `is_pay_v24`, `is_pay_v28`,
@@ -430,3 +434,13 @@ market_max_demand (source: dc_v2/06_weave/55_weave.py).
 13. `mbr_submarket` / `prvdr_submarket`: full value sets (footprint
     submarket list), now that they are display/context columns rather
     than filters.
+
+### Resolved
+
+2. RESOLVED (VERIFIED-IN-BQ): `srv_start_dt` window confirmed 2023-01-01
+   to 2025-12-31.
+3. RESOLVED (VERIFIED-IN-BQ): `business_ln_cd` carries exactly two
+   values, CP and ME.
+6. RESOLVED (VERIFIED-IN-BQ): the mdcr_base_membership date column is
+   `eff_dt`; one row = member-month confirmed. PLAN.md's `eff_df`
+   reference is the historical error.
