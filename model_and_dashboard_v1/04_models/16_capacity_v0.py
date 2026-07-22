@@ -6,11 +6,18 @@ WHAT  : md1_capacity_v0 - the v0 provider capacity table (D14). v0
         ceiling = max observed monthly visits (2024-2025) x 12; monthly
         ceiling = that max month. Explicitly labeled v0 on every
         deliverable; replaced by the modeled 16-18 trio in a later
-        phase. Providers are routed within county x specialty by
-        new-patient share: intake_weight = the provider's share of 2025
-        new-patient visits within their prvdr_county_clean x
-        cms_specialty cell (weights sum to 1 per cell; SAFE_DIVIDE;
-        null when the cell has zero new-patient visits - counted).
+        phase. Providers are routed within state x county x specialty
+        by new-patient share: intake_weight = the provider's share of
+        2025 new-patient visits within their prvdr_state x
+        prvdr_county_clean x cms_specialty cell (weights sum to 1 per
+        cell; SAFE_DIVIDE; null when the cell has zero new-patient
+        visits - counted). prvdr_state is derived from the modal
+        prvdr_submarket's leading two-letter token ("FL South" -> "FL",
+        dictionary trap 16); a bare county name pools same-named
+        counties across states (trap 25), which the state key prevents.
+        Providers with null or unparseable submarket carry prvdr_state
+        = 'UNK', are counted in the print, and are excluded from
+        routing (intake_weight null; D15 residual).
         cms_specialty comes from md1_ref_specialty_demand joined on the
         provider's modal specialty_ctg_cd (one-to-one post-D12, so no
         fan-out); providers whose modal code is unbridged are excluded
@@ -72,6 +79,12 @@ WITH mapped AS (
     p.epdb_dw_prvdr_id,
     dm.cms_specialty,
     p.prvdr_county_clean,
+    CASE
+      WHEN REGEXP_CONTAINS(UPPER(TRIM(p.prvdr_submarket)),
+                           r'^[A-Z]{{2}}(\\s|$)')
+      THEN UPPER(SUBSTR(TRIM(p.prvdr_submarket), 1, 2))
+      ELSE 'UNK'
+    END AS prvdr_state,
     p.visits_2025,
     p.new_patient_share_2025
   FROM `{PROFILE}` p
@@ -100,15 +113,17 @@ SELECT
   m.epdb_dw_prvdr_id,
   m.cms_specialty,
   m.prvdr_county_clean,
+  m.prvdr_state,
   m.visits_2025,
   pk.monthly_max,
   pk.monthly_max * 12 AS ceiling_annual_v0,
   pk.monthly_max AS ceiling_monthly_v0,
   m.new_patient_share_2025,
   SAFE_DIVIDE(
-    COALESCE(np.new_visits_2025, 0),
-    SUM(COALESCE(np.new_visits_2025, 0))
-      OVER (PARTITION BY m.prvdr_county_clean, m.cms_specialty))
+    IF(m.prvdr_state = 'UNK', NULL, COALESCE(np.new_visits_2025, 0)),
+    SUM(IF(m.prvdr_state = 'UNK', NULL, COALESCE(np.new_visits_2025, 0)))
+      OVER (PARTITION BY m.prvdr_state, m.prvdr_county_clean,
+            m.cms_specialty))
     AS intake_weight,
   pk.monthly_max * 12 - m.visits_2025 AS headroom_annual_v0
 FROM mapped m
@@ -148,40 +163,52 @@ def main():
           f"{excluded:,} across {coverage['unbridged_modal_codes']} codes "
           f"(v0 capacity covers bridged demand specialties only)")
 
-    keys = q(client, "keys, ceiling floor, null intake weights (R2)", f"""
+    keys = q(client, "keys, ceiling floor, null intake weights, UNK state "
+                     "(R2)", f"""
         SELECT COUNT(*) AS row_count,
                COUNT(DISTINCT epdb_dw_prvdr_id) AS distinct_keys,
                COUNTIF(epdb_dw_prvdr_id IS NULL) AS null_keys,
+               COUNTIF(prvdr_state IS NULL) AS null_state,
+               COUNTIF(prvdr_state = 'UNK') AS unk_state_providers,
+               STRING_AGG(DISTINCT prvdr_state, ',' ORDER BY prvdr_state)
+                 AS distinct_states,
                COUNTIF(ceiling_annual_v0 < visits_2025) AS ceiling_below_actual,
                COUNTIF(intake_weight IS NULL) AS null_intake_weights
         FROM `{OUT}`""")[0]
-    print(f"\nnull intake_weight rows (cell has zero 2025 new-patient "
-          f"visits): {keys['null_intake_weights']:,}")
+    print(f"\ndistinct prvdr_state values: {keys['distinct_states']}")
+    print(f"providers with prvdr_state = 'UNK' (null or unparseable "
+          f"submarket - excluded from routing): "
+          f"{keys['unk_state_providers']:,}")
+    print(f"null intake_weight rows (UNK state, or cell has zero 2025 "
+          f"new-patient visits): {keys['null_intake_weights']:,}")
 
-    weights = q(client, "intake weights sum to 1 per county x specialty "
-                        "cell (R4)", f"""
+    weights = q(client, "intake weights sum to 1 per state x county x "
+                        "specialty cell (R4)", f"""
         SELECT COUNTIF(ABS(weight_sum - 1) > 0.001) AS bad_cells,
                COUNT(*) AS cells_with_new_visits
         FROM (
-          SELECT prvdr_county_clean, cms_specialty,
+          SELECT prvdr_state, prvdr_county_clean, cms_specialty,
                  SUM(intake_weight) AS weight_sum
           FROM `{OUT}`
           WHERE intake_weight IS NOT NULL
-          GROUP BY prvdr_county_clean, cms_specialty
+          GROUP BY prvdr_state, prvdr_county_clean, cms_specialty
         )""")[0]
 
     assert keys["row_count"] == keys["distinct_keys"] and \
         keys["null_keys"] == 0, (
         f"GATE FAILED (R2): epdb_dw_prvdr_id not unique or null: {keys}")
+    assert keys["null_state"] == 0, (
+        f"GATE FAILED (R2): {keys['null_state']} providers with null "
+        f"prvdr_state - derivation must yield a token or 'UNK'")
     assert keys["ceiling_below_actual"] == 0, (
         f"GATE FAILED (R2): {keys['ceiling_below_actual']} providers with "
         f"ceiling_annual_v0 below visits_2025 - construction broken")
     assert weights["bad_cells"] == 0, (
         f"GATE FAILED (R4): {weights['bad_cells']} of "
-        f"{weights['cells_with_new_visits']} county x specialty cells whose "
-        f"intake weights do not sum to 1 within 0.001")
-    print(f"\nALL GATES PASSED (R2 key + ceiling floor, R4 intake weights "
-          f"over {weights['cells_with_new_visits']:,} cells)")
+        f"{weights['cells_with_new_visits']} state x county x specialty "
+        f"cells whose intake weights do not sum to 1 within 0.001")
+    print(f"\nALL GATES PASSED (R2 key + state + ceiling floor, R4 intake "
+          f"weights over {weights['cells_with_new_visits']:,} cells)")
 
 
 if __name__ == "__main__":

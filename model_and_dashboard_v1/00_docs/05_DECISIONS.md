@@ -201,3 +201,23 @@ Alternatives considered: waiting for the modeled ceilings; rejected for
 the MVP timeline. Cross-provider percentile ceilings; rejected - a
 provider's own observed peak is more defensible than a percentile cut
 (consistent with D05's rejection of percentile cutoffs).
+
+## D15 — [date]
+
+Decision: Provider routing cells are keyed prvdr_state x
+prvdr_county_clean x cms_specialty; prvdr_state is derived from the
+modal prvdr_submarket's leading two-letter token ("FL South" -> "FL",
+the trap 16 technique). md1_capacity_v0 gains prvdr_state; the v2
+dashboard matches providers on state + county name.
+Reason: prvdr_county is a bare name and Lake/Marion/Union exist in
+several footprint states; the original county-name x specialty cell
+pooled same-named counties across states - wrong intake weights at
+source (Known trap 25).
+Residual: providers whose submarket is null or unparseable carry
+prvdr_state = 'UNK', are counted in the 16 print, and are excluded
+from routing (null intake_weight); the v2 provider note shows the UNK
+count when such rows share the selected county's name.
+Alternatives considered: carrying the provider county FIPS through the
+04/09 foundation notebooks; cleaner long-term but reopens the
+foundation layer - out of scope for this fix (boundaries: no 04/09
+changes).

@@ -472,6 +472,16 @@ market_max_demand (source: dc_v2/06_weave/55_weave.py).
     context only: they span the whole book of business (NJ North, NY
     Metro, TX Houston, CA Bay Area and similar) and include nulls. Never
     use them as a footprint filter (VERIFIED-IN-BQ, Resolved gap 13).
+25. `prvdr_county` / `prvdr_county_clean` is a BARE county name; Lake,
+    Marion, Union and others exist in several footprint states, so any
+    key on county name alone pools same-named counties across states.
+    md1_capacity_v0 originally keyed intake weights on county-name x
+    specialty - wrong weights at source. Fixed per D15: prvdr_state is
+    derived from the modal prvdr_submarket's leading two-letter token
+    (trap 16 technique) and the routing cell key is prvdr_state x
+    prvdr_county_clean x cms_specialty; providers with null or
+    unparseable submarket carry prvdr_state = 'UNK' and are excluded
+    from routing (counted in the 16 print and the v2 provider note).
 
 ---
 

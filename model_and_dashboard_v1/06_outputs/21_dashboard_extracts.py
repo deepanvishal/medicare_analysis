@@ -86,7 +86,8 @@ EXTRACT_DIR = os.path.join(os.path.dirname(_expanded_scope_dir()),
                            "model_and_dashboard_v1", "07_dashboard",
                            "extracts")
 
-MANIFEST_NOTE = "capacity=v0 observed-peak; demand=calibrated to 2025 actuals"
+MANIFEST_NOTE = ("capacity=v0 observed-peak; demand=calibrated to 2025 "
+                 "actuals; provider routing keyed state+county (D15)")
 
 EXTRACTS = [
     ("enrollment.parquet", "md1_enrollment_history", f"""

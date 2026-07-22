@@ -196,11 +196,10 @@ def _norm_county(name):
     return n
 
 
-_names_states = {}
-for _c, _n in COUNTY_NAME.items():
-    _names_states.setdefault(_norm_county(_n), set()).add(
-        COUNTY_STATE.get(_c))
-NAME_COLLIDES = {k for k, v in _names_states.items() if len(v) > 1}
+if "prvdr_state" not in PROV.columns:
+    raise RuntimeError(
+        "providers.parquet has no prvdr_state column - regenerate the "
+        "extracts with 21_dashboard_extracts.py (provider state fix, D15)")
 
 
 def growth_label(county, band):
@@ -255,11 +254,15 @@ def county_payload(county):
     _, base_ranks = ranks_desc(base_conditions)
 
     name = COUNTY_NAME.get(county)
+    state = COUNTY_STATE.get(county)
     matched = 0
-    if name:
+    unk_names = 0
+    if name and state:
         target = _norm_county(name)
-        prov = PROV[PROV["prvdr_county_clean"].map(
-            lambda x: _norm_county(x) == target)]
+        name_mask = PROV["prvdr_county_clean"].map(
+            lambda x: _norm_county(x) == target)
+        unk_names = int((name_mask & (PROV["prvdr_state"] == "UNK")).sum())
+        prov = PROV[name_mask & (PROV["prvdr_state"] == state)]
         matched = len(prov)
     else:
         prov = PROV.iloc[0:0]
@@ -268,14 +271,17 @@ def county_payload(county):
         prov_mode = (f"0 providers matched to county "
                      f"{county_label(county)}; showing footprint-wide top "
                      f"providers (routing approximate)")
+        if unk_names:
+            prov_mode += (f"; {unk_names:,} same-named providers exist "
+                          f"but carry unknown state (UNK) and are "
+                          f"excluded from routing")
     else:
         prov_mode = (f"{matched:,} providers matched to "
-                     f"{county_label(county)}")
-        if target in NAME_COLLIDES:
-            prov_mode += (" - NOTE: this county name exists in more than "
-                          "one footprint state; provider rows and intake "
-                          "weights pool those states until a provider "
-                          "state column ships upstream")
+                     f"{county_label(county)} in {state}")
+        if unk_names:
+            prov_mode += (f"; {unk_names:,} same-named providers with "
+                          f"unknown state (UNK) excluded from the match "
+                          f"and from routing")
     prov = prov.sort_values("visits_2025", ascending=False)
     prov = prov.groupby("cms_specialty", sort=False) \
                .head(TOP_PROVIDERS_STORED_PER_SPEC)
@@ -1233,8 +1239,9 @@ def update(master, b0, b1, b2, b3, _reset_clicks, selected_specialties,
         r.pop("_visits", None)
     note = (f"{payload['prov_mode']}; showing top {len(provider_rows)} of "
             f"{total_in_selection} in selection by 2025 visits; "
-            f"{no_weight} carry no intake weight (zero 2025 new-patient "
-            f"visits in their cell - excluded from routing)")
+            f"{no_weight} carry no intake weight (unknown state or zero "
+            f"2025 new-patient visits in their cell - excluded from "
+            f"routing)")
 
     spec_items = sorted(
         ((s, base_demand.get(s, 0.0), demand[s])
