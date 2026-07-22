@@ -33,9 +33,10 @@ demand math; per-condition visit rates come via the visit-splitting model
 | 03 | 02_foundation | 03_member_base.py | In-scope member spine: age bands (60-64, 65-74, 75-84, 85+), county, tenure flag | A870800_medicare_analysis_membership, A870800_medicare_supply_demand_ms_ref_county | R1/R2/R6 assertions pass |
 | 04 | 02_foundation | 04_visits_base.py | Visit-level table: member, provider, specialty, service date, visit key = distinct member x provider x date | A870800_medicare_analysis_2025_claims | Visit totals reconcile to claims (R1); R2 passes |
 | 05 | 02_foundation | 05_condition_flags.py | Member x condition flags from diagnosis-to-HCC mapping | A870800_medicare_analysis_2025_claims, HCC_ICD_Mapping_2025 | Join hit rate reported; R7 passes |
+| 05b | 02_foundation | 05b_ref_specialty_demand.py | Demand-only specialty mapping: exactly one CMS specialty per aetna code via the D12 primary-pick policy; 14 and 15 join it, the compliance crosswalk stays one-to-many for adequacy counting | A870800_medicare_supply_demand_ref_specialty_crosswalk | aetna_cd unique (R2); residual multi-maps fail loudly, never auto-picked |
 | 06 | 03_rates | 06_enrollment_history.py | County x band x month member counts | output of 03 | Totals reconcile to member spine (R4) |
 | 07 | 03_rates | 07_sickness_rates.py | Prevalence per county x band x condition; feeds BOTH the demand math and the dashboard condition display | outputs of 03 and 05 | R4 reconciliation passes |
-| 08 | 03_rates | 08_visit_rates.py | Per-condition visit rates - visits[condition, specialty] - produced with the visit-splitting model outputs from notebooks 13-15, plus the base visit rate for members with no mapped conditions; depends on 13-15 | outputs of 13-15, 04 and 05, A870800_medicare_supply_demand_ref_specialty_crosswalk | Rates reconcile against total observed visits within the R4 tolerance |
+| 08 | 03_rates | 08_visit_rates.py | Per-condition visit rates - visits[condition, specialty] - produced with the visit-splitting model outputs from notebooks 13-15, plus the base visit rate for members with no mapped conditions; depends on 13-15 | outputs of 13-15, 04 and 05, md1_ref_specialty_demand (05b - never the compliance crosswalk, per D12) | Rates reconcile against total observed visits within the R4 tolerance |
 | 09 | 03_rates | 09_provider_profile.py | Per provider: current visits, new-patient share, panel age mix | outputs of 04 and 01 | R2/R3 pass at provider grain |
 | 10 | 04_models | 10_growth_eda.py | EDA behind the growth method; its findings fed the 11/12 build and D11 (slider defaults are 0; the growth table is context) | output of 06 | Variables documented with keep/drop/engineer reasons |
 | 11 | 04_models | 11_growth_model.py | EXECUTED. Context table for last-year labels: md1_growth_defaults yoy is shown beside each slider as "last year: +X%"; slider defaults are 0 per D11 | output of 06, EDA findings from 10 | md1_growth_defaults built; repurposed as context per D11 |
@@ -53,7 +54,8 @@ demand math; per-condition visit rates come via the visit-splitting model
 | 23 | 07_dashboard | whatif_dashboard.py | Deliverable 2, real data wired in | outputs of 21 | Dashboard math matches 19 calibration |
 
 Run-order exception: notebook 08 runs AFTER 13-15 (it consumes the
-visit-splitting model), despite its lower number.
+visit-splitting model), despite its lower number. Notebook 05b runs
+BEFORE 14 and 15 - they join its demand mapping.
 
 ## Model rigor requirement
 

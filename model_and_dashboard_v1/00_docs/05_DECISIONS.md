@@ -130,3 +130,34 @@ only three Decembers of history, last year's change points the wrong
 way. Zero-growth beats everything.
 Alternatives considered: Shipping the shrunken defaults; rejected
 because the backtest calibration is inverted.
+
+## D12 — [date]
+
+Decision: Demand visit counting joins md1_ref_specialty_demand (one CMS
+specialty per aetna code, built by notebook 05b); the compliance
+crosswalk is never joined for visit counting.
+Problem (recorded verbatim): The 43-row ref_specialty_crosswalk is
+deliberately one-to-many on aetna_cd (e.g. WHOS maps to Acute Inpatient
+Hospitals AND Outpatient Infusion/Chemo; VVRH maps to four therapy
+specialties). Correct for compliance counting, where one provider
+satisfies several standards; wrong for demand counting, where it clones
+visits. Notebooks 14/15 inherited the fan-out; 15's twin numbers and
+inflated reconstruction errors follow. Fix: a demand-only mapping with
+exactly one CMS specialty per aetna code.
+Primary-pick policy: WHOS -> Acute Inpatient Hospitals; VVRH ->
+Physical Therapy; C -> Cardiology; CS -> Cardiothoracic Surgery;
+WBHF -> Outpatient Behavioral Health. Any residual multi-map fails the
+05b build loudly, listing the offending codes and names; never
+auto-picked.
+Known residual at recording time: VVMH maps to Clinical Psychology AND
+Clinical Social Work (Step3 crosswalk source) and is NOT covered by the
+policy above; 05b fails on it by design - before the table can be
+created - until a deliberate VVMH pick is added to the policy. This is
+an open business decision, not an oversight.
+Consequence: the CMS specialty names not picked by the policy leave the
+demand axis entirely (05b prints the dropped names at build time);
+compliance reporting keeps them via the untouched one-to-many
+crosswalk.
+Alternatives considered: keeping the fan-out and deduplicating visits
+downstream in every consumer; rejected because each consumer would need
+the same dedupe and the rate-table grain would stay ambiguous.

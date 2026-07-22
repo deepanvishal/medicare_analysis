@@ -154,7 +154,10 @@ county_fips (gate asserts none unresolved). Status: VERIFIED-IN-CODE.
 
 43-row specialty bridge: claims category code to CMS specialty. Grain: one
 row per (cms_specialty, aetna_cd) pair; one aetna_cd can map to multiple
-cms_specialty (fan-out is real, e.g. VVMH). Status: VERIFIED-IN-CODE.
+cms_specialty (fan-out is real: VVMH -> Clinical Psychology + Clinical
+Social Work; WHOS and VVRH likewise, see trap 15). COMPLIANCE counting
+only - demand visit counting joins md1_ref_specialty_demand (2.15)
+instead, per D12. Status: VERIFIED-IN-CODE.
 
 | Column | Type | Meaning | Status | Source |
 |---|---|---|---|---|
@@ -244,6 +247,27 @@ notebook 53.
   morbidity_level (source: expanded_scope/30_dc_member_dim.py).
 - `ms_dc_gap` (cfg.table("dc_gap")): see 2.13 output columns (source:
   expanded_scope/36_dc_gap.py).
+
+### 2.15 `md1_ref_specialty_demand` (cfg.src) — demand-only specialty mapping
+
+Built by model_and_dashboard_v1/02_foundation/05b_ref_specialty_demand.py
+from the 2.6 compliance crosswalk by applying the D12 primary-pick
+policy (WHOS -> Acute Inpatient Hospitals; VVRH -> Physical Therapy;
+C -> Cardiology; CS -> Cardiothoracic Surgery; WBHF -> Outpatient
+Behavioral Health). Grain: aetna_cd UNIQUE - exactly one CMS specialty
+per code; the build fails loudly on any residual multi-map and never
+auto-picks. Status: VERIFIED-IN-CODE.
+
+| Column | Type | Meaning | Status | Source |
+|---|---|---|---|---|
+| aetna_cd | string | join key; holds specialty_ctg_cd values (same semantics as 2.6, trap 15) | VERIFIED-IN-CODE | 05b_ref_specialty_demand.py |
+| cms_specialty | string | the single CMS specialty a demand visit counts toward | VERIFIED-IN-CODE | 05b_ref_specialty_demand.py |
+
+Demand visit counting joins THIS table only. The 2.6 crosswalk stays
+one-to-many BY DESIGN for compliance counting; joining it for visit
+counting clones visits (trap 15, D12). CMS specialties dropped by the
+pick policy leave the demand axis; compliance reporting keeps them.
+Consumers: notebooks 14 and 15.
 
 ---
 
@@ -400,7 +424,13 @@ market_max_demand (source: dc_v2/06_weave/55_weave.py).
 15. The 43-row crosswalk's join column is `aetna_cd`, and its VALUES are
     specialty_ctg_cd codes; joining on a column named specialty_ctg_cd
     fails with "not found" (sources: expanded_scope/36_dc_gap.py;
-    Step3_specialty_cd_based_report.sql).
+    Step3_specialty_cd_based_report.sql). The crosswalk is also
+    one-to-many on aetna_cd BY DESIGN - one provider can satisfy
+    several adequacy standards (WHOS spans Acute Inpatient Hospitals
+    AND Outpatient Infusion/Chemo; VVRH spans four therapy standards) -
+    and it must NEVER be joined for visit counting: the fan-out clones
+    visits. Demand joins use md1_ref_specialty_demand only (section
+    2.15, built by 05b under the D12 primary-pick policy).
 16. State from `prvdr_submarket` requires UPPER(LEFT(..., 2)) (sources:
     dc_v2/00_docs/PLAN.md; expanded_scope/34_dc_book_utilization.py).
 17. `mdcr_tin_par_flag` is TIN-level and masks inactive individual

@@ -2,15 +2,22 @@
 15 - visit-split validation   [PYTHON / read-only BigQuery report]
 
 WHAT  : Validation of the 14 visit-splitting fit (md1_visitsplit_rates).
-        Context from the executed 14 run: 56 kept conditions, 39 fitted
-        specialties, deflation mostly 1.0 (a few 0.78-0.89 where
-        nonnegativity binds), r2 high for condition-driven specialties
-        (Primary Care 0.42, Cardiology 0.39, Nephrology 0.35) and near
-        zero for lifestyle/mechanical ones (Chiropractic, Allergy,
-        Plastic) - expected. The 14 anchor print compared solo TOTAL
-        rates against INCREMENTAL coefficients, an apples-to-oranges
-        construction; section 1 here computes the corrected comparison
-        (solo rate vs base_rate + coef_deflated).
+        All bridged joins use md1_ref_specialty_demand (built by 05b
+        per D12): one CMS specialty per aetna code, so each visit is
+        counted once. The compliance crosswalk's deliberate one-to-many
+        fan-out cloned visits into twin specialty rows and inflated the
+        reconstruction error here before D12; it is never joined for
+        demand counting. Context from the executed 14 run (numbers from
+        the fan-out run that preceded the D12 dedupe): 56 kept
+        conditions, 39 fitted specialties, deflation mostly 1.0 (a few
+        0.78-0.89 where nonnegativity binds), r2 high for
+        condition-driven specialties (Primary Care 0.42, Cardiology
+        0.39, Nephrology 0.35) and near zero for lifestyle/mechanical
+        ones (Chiropractic, Allergy, Plastic) - expected. The 14 anchor
+        print compared solo TOTAL rates against INCREMENTAL
+        coefficients, an apples-to-oranges construction; section 1 here
+        computes the corrected comparison (solo rate vs base_rate +
+        coef_deflated).
         Sections: (1) corrected anchor check with Pearson and a
         PASS/REVIEW verdict at 0.7; (2) aggregate reconstruction -
         predicted 2025 visits per county x fitted specialty from county
@@ -48,11 +55,11 @@ R3    : Attribution = MEMBER county (demand side) on both the exposure
 GRAIN : stdout report only; no tables created.
 INPUTS: md1_visitsplit_rates (built by 14), md1_condition_flags,
         md1_member_base, md1_visits_base (batch A2 outputs),
-        cfg.base("ref_specialty_crosswalk"), cfg.table("ref_county")
+        md1_ref_specialty_demand (built by 05b), cfg.table("ref_county")
 OUTPUT: stdout report only.
 Run   : python model_and_dashboard_v1/04_models/15_visitsplit_validation.py
         Requires numpy locally (installed with scipy, per the 14
-        dependency). Run after 14; independent of 07,
+        dependency). Run after 05b and 14; independent of 07,
         09 and the 10-12 growth trio. Notebook 08 waits on this
         notebook's go/no-go.
 """
@@ -88,7 +95,7 @@ RATES  = cfg.src("md1_visitsplit_rates")
 VISITS = cfg.src("md1_visits_base")
 CFLAGS = cfg.src("md1_condition_flags")
 MBASE  = cfg.src("md1_member_base")
-XWALK  = cfg.base("ref_specialty_crosswalk")
+XWALK  = cfg.src("md1_ref_specialty_demand")
 CTY    = cfg.table("ref_county")
 
 FOOTPRINT = "('FL', 'OH', 'AZ', 'IL')"

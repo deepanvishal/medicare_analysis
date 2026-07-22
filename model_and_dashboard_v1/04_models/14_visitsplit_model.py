@@ -12,13 +12,17 @@ FORMULA: for each CMS specialty s, member 2025 bridged visits
         rate table and base_s is the base rate.
 METHOD: (1) 2025 in-scope members (md1_member_base spine) and their
         2025 visits from md1_visits_base restricted to BRIDGED
-        specialties: join the 43-row crosswalk on aetna_cd (which holds
-        specialty_ctg_cd values, dictionary trap 15) with TRIM(CAST())
-        both sides, aggregating specialty_ctg_cd to cms_specialty; the
-        crosswalk fans out, so a visit can count toward more than one
-        CMS specialty. Unbridged visits are OUT OF SCOPE - the recorded
-        37.6 percent share is intentional mapping policy (dictionary
-        trap 23), restated here, not re-investigated. (2) Conditions =
+        specialties: join md1_ref_specialty_demand on aetna_cd (which
+        holds specialty_ctg_cd values, dictionary trap 15) with
+        TRIM(CAST()) both sides, aggregating specialty_ctg_cd to
+        cms_specialty. The demand mapping (built by 05b per D12) is
+        one-to-ONE per aetna code, so each visit counts toward exactly
+        one CMS specialty; the compliance crosswalk's deliberate
+        one-to-many fan-out is correct for adequacy counting but clones
+        visits for demand and is never joined here. Unbridged visits
+        are OUT OF SCOPE - the recorded 37.6 percent share is
+        intentional mapping policy (dictionary trap 23), restated here,
+        not re-investigated. (2) Conditions =
         2025 HCC_v24 with at least MIN_CONDITION_MEMBERS members;
         rarer ones pool into one OTHER_CONDITION indicator. (3) Fit via
         sufficient statistics computed IN BigQuery with three queries
@@ -47,13 +51,13 @@ R3    : Attribution = member-level fit; the member-county join is scope
 GRAIN : cms_specialty x condition, where condition includes BASE_RATE
         and OTHER_CONDITION rows.
 INPUTS: md1_member_base, md1_visits_base, md1_condition_flags (batch A2
-        outputs), cfg.base("ref_specialty_crosswalk"),
+        outputs), md1_ref_specialty_demand (built by 05b),
         cfg.table("ref_county")
 OUTPUT: md1_visitsplit_rates (BigQuery table).
 Run   : python model_and_dashboard_v1/04_models/14_visitsplit_model.py
         Requires scipy locally (pip install scipy); BigQuery does only
-        aggregation. Run after batch A2 tables and notebook 13;
-        independent of 07, 09 and the 10-12 growth trio.
+        aggregation. Run after batch A2 tables, notebook 05b and
+        notebook 13; independent of 07, 09 and the 10-12 growth trio.
 """
 
 import os
@@ -87,7 +91,7 @@ from scipy.optimize import nnls
 VISITS = cfg.src("md1_visits_base")
 CFLAGS = cfg.src("md1_condition_flags")
 MBASE  = cfg.src("md1_member_base")
-XWALK  = cfg.base("ref_specialty_crosswalk")
+XWALK  = cfg.src("md1_ref_specialty_demand")
 CTY    = cfg.table("ref_county")
 OUT    = cfg.src("md1_visitsplit_rates")
 
