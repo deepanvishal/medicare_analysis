@@ -275,15 +275,29 @@ app.layout = html.Div(
                                       ["band", "baseline", "scenario", "delta",
                                        "pct_change"]],
                              **TABLE_STYLE),
-                         html.H4("Condition mix"),
                          dcc.RadioItems(id="rad-topn",
                                         options=[{"label": "Top 10", "value": 10},
                                                  {"label": "Top 20", "value": 20}],
                                         value=10, inline=True,
                                         style={"fontSize": "13px",
-                                               "marginBottom": "6px"},
+                                               "margin": "14px 0 6px"},
                                         inputStyle={"marginRight": "4px"},
                                         labelStyle={"marginRight": "16px"}),
+                         html.Div(style={"display": "flex", "gap": "16px",
+                                         "alignItems": "flex-start"},
+                                  children=[
+                                      html.Div(style={"flex": "1", "minWidth": "0"},
+                                               children=[
+                                                   dcc.Graph(
+                                                       id="fig-specialty",
+                                                       config={"displayModeBar": False})]),
+                                      html.Div(style={"flex": "1", "minWidth": "0"},
+                                               children=[
+                                                   dcc.Graph(
+                                                       id="fig-condition",
+                                                       config={"displayModeBar": False})]),
+                                  ]),
+                         html.H4("Condition mix"),
                          html.Div("Members can have multiple conditions; column does "
                                   "not sum to enrollment.",
                                   style={"fontSize": "12px", "color": "#898781",
@@ -302,8 +316,6 @@ app.layout = html.Div(
                                       dcc.Dropdown(id="dd-specialty",
                                                    options=SPECIALTIES,
                                                    value=SPECIALTIES, multi=True)]),
-                         dcc.Graph(id="fig-demand",
-                                   config={"displayModeBar": False}),
                          dash_table.DataTable(
                              id="tbl-demand",
                              columns=[{"name": c, "id": c} for c in
@@ -356,15 +368,13 @@ app.layout = html.Div(
     ])
 
 
-def build_demand_figure(selected, demand):
+def build_hbar_figure(title, items):
     fig = go.Figure()
-    names, base_seg, grow_seg, labels, label_y, dash_x, dash_y = [], [], [], [], [], [], []
-    idx = 0
-    for s, name in enumerate(SPECIALTIES):
-        if name not in selected:
-            continue
-        base = BASELINE_DEMAND[s]
-        scen = demand[s]
+    n = len(items)
+    y = list(range(n))
+    names, base_seg, grow_seg, labels, dash_x, dash_y = [], [], [], [], [], []
+    max_x = 1.0
+    for i, (name, base, scen) in enumerate(items):
         delta = scen - base
         names.append(name)
         if scen >= base:
@@ -373,27 +383,31 @@ def build_demand_figure(selected, demand):
         else:
             base_seg.append(scen)
             grow_seg.append(0)
-            dash_x.extend([idx - 0.35, idx + 0.35, None])
-            dash_y.extend([base, base, None])
+            dash_x.extend([base, base, None])
+            dash_y.extend([i - 0.35, i + 0.35, None])
         labels.append(f"{fmt(scen)} ({delta:+,.0f})")
-        label_y.append(max(scen, base))
-        idx += 1
-    x = list(range(len(names)))
-    fig.add_trace(go.Bar(x=x, y=base_seg, marker_color=GRAY, name="Baseline"))
-    fig.add_trace(go.Bar(x=x, y=grow_seg, marker_color=GREEN, name="Growth"))
+        max_x = max(max_x, base, scen)
+    fig.add_trace(go.Bar(y=y, x=base_seg, orientation="h",
+                         marker_color=GRAY, name="Baseline"))
+    fig.add_trace(go.Bar(y=y, x=grow_seg, orientation="h",
+                         marker_color=GREEN, name="Growth"))
     if dash_x:
         fig.add_trace(go.Scatter(x=dash_x, y=dash_y, mode="lines",
                                  line={"color": "#52514e", "dash": "dash",
                                        "width": 2},
                                  name="Baseline level"))
-    for i, lbl in enumerate(labels):
-        fig.add_annotation(x=x[i], y=label_y[i], text=lbl, showarrow=False,
-                           yshift=12, font={"size": 11})
-    fig.update_layout(barmode="stack", height=320,
-                      margin={"l": 40, "r": 10, "t": 10, "b": 30},
-                      xaxis={"tickvals": x, "ticktext": names},
-                      yaxis={"title": "Annual visits"},
-                      legend={"orientation": "h", "y": 1.12},
+    for i, (name, base, scen) in enumerate(items):
+        fig.add_annotation(x=max(base, scen), y=i, text=labels[i],
+                           showarrow=False, xanchor="left", xshift=6,
+                           font={"size": 11})
+    fig.update_layout(barmode="stack",
+                      height=90 + 34 * max(n, 1),
+                      margin={"l": 10, "r": 10, "t": 40, "b": 30},
+                      title={"text": title, "font": {"size": 14}},
+                      yaxis={"tickvals": y, "ticktext": names,
+                             "autorange": "reversed"},
+                      xaxis={"range": [0, max_x * 1.28]},
+                      legend={"orientation": "h", "y": -0.18},
                       plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb")
     return fig
 
@@ -414,7 +428,8 @@ def build_demand_figure(selected, demand):
     Output("k-over", "children"),
     Output("tbl-enroll", "data"),
     Output("tbl-condition", "data"),
-    Output("fig-demand", "figure"),
+    Output("fig-specialty", "figure"),
+    Output("fig-condition", "figure"),
     Output("tbl-demand", "data"),
     Output("tbl-provider", "data"),
     Input("s-master", "value"),
@@ -532,11 +547,20 @@ def update(master, b0, b1, b2, _reset_clicks, selected_specialties, top_n, sync_
                 "room_left": fmt(room) if room >= 0 else f"short by {fmt(-room)}",
                 "status": status})
 
-    figure = build_demand_figure(selected, demand)
+    spec_items = sorted(
+        ((SPECIALTIES[s], BASELINE_DEMAND[s], demand[s])
+         for s in range(len(SPECIALTIES)) if SPECIALTIES[s] in selected),
+        key=lambda t: -t[2])[:n_show]
+    cond_items = [(CONDITIONS[c], BASELINE_CONDITIONS[c], cond_now[c])
+                  for c in order[:n_show]]
+    fig_specialty = build_hbar_figure(f"Specialty demand - top {n_show}", spec_items)
+    fig_condition = build_hbar_figure(f"Condition members - top {n_show}", cond_items)
+
     return (slider_out[0], slider_out[1], slider_out[2], slider_out[3], store_out,
             readout_master, readouts[0], readouts[1], readouts[2],
             fmt(total_enroll), fmt(sum(demand)), str(n_at), str(n_over),
-            enroll_rows, condition_rows, figure, demand_rows, provider_rows)
+            enroll_rows, condition_rows, fig_specialty, fig_condition,
+            demand_rows, provider_rows)
 
 
 if __name__ == "__main__":
