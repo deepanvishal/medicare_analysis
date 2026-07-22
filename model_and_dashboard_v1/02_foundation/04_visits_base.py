@@ -2,7 +2,7 @@
 04 - visits base   [PYTHON runner / BigQuery DDL]
 
 WHAT  : Visit-level table. One row per visit = distinct member_id x
-        srv_prvdr_id x srv_start_dt, months 2024-01 through 2025-12; 2023
+        epdb_dw_prvdr_id x srv_start_dt, months 2024-01 through 2025-12; 2023
         is used only as lookback memory for is_new_patient (the 12-month
         member x provider rule). Age at service comes from the membership
         extract joined on member and service month; when the service month
@@ -16,7 +16,7 @@ R3    : BOTH county columns are kept: demand analyses use mbr_county_cd
         (member county), capacity analyses use prvdr_county (provider
         county). This table is the one place both lenses share a row;
         downstream tables must pick exactly one and say so.
-GRAIN : member_id x srv_prvdr_id x srv_start_dt.
+GRAIN : member_id x epdb_dw_prvdr_id x srv_start_dt.
 INPUTS: anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_analysis_2025_claims
         anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_analysis_membership
         cfg.table("ref_county")
@@ -59,6 +59,21 @@ OUT    = cfg.src("md1_visits_base")
 
 FOOTPRINT = "('FL', 'OH', 'AZ', 'IL')"
 
+CLAIMS_REQUIRED = ("member_id", "epdb_dw_prvdr_id", "srv_start_dt", "age_nbr",
+                   "business_ln_cd", "mbr_county_cd", "specialty_ctg_cd",
+                   "prvdr_county", "prvdr_submarket")
+
+
+def _assert_claims_schema(client):
+    present = {r["column_name"] for r in client.query(
+        "SELECT column_name FROM "
+        "`anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.INFORMATION_SCHEMA.COLUMNS` "
+        "WHERE table_name = 'A870800_medicare_analysis_2025_claims'").result()}
+    missing = [c for c in CLAIMS_REQUIRED if c not in present]
+    assert not missing, (
+        f"SCHEMA GUARD FAILED: A870800_medicare_analysis_2025_claims is missing "
+        f"columns {missing}; the provider id must be epdb_dw_prvdr_id")
+
 DDL = f"""
 CREATE OR REPLACE TABLE `{OUT}`
 OPTIONS (labels=[("owner", "deepan_thulasi_aetna_com")])
@@ -66,7 +81,7 @@ AS
 WITH scoped AS (
   SELECT
     c.member_id,
-    c.srv_prvdr_id,
+    c.epdb_dw_prvdr_id,
     c.srv_start_dt,
     DATE_TRUNC(c.srv_start_dt, MONTH) AS month,
     MAX(c.mbr_county_cd)    AS mbr_county_cd,
@@ -79,18 +94,18 @@ WITH scoped AS (
   WHERE rc.state_cd IN {FOOTPRINT}
     AND c.age_nbr >= 60
     AND c.business_ln_cd IN ('CP', 'ME')
-  GROUP BY c.member_id, c.srv_prvdr_id, c.srv_start_dt, month
+  GROUP BY c.member_id, c.epdb_dw_prvdr_id, c.srv_start_dt, month
 ),
 pair_months AS (
-  SELECT DISTINCT member_id, srv_prvdr_id, month FROM scoped
+  SELECT DISTINCT member_id, epdb_dw_prvdr_id, month FROM scoped
 ),
 flagged AS (
   SELECT
     member_id,
-    srv_prvdr_id,
+    epdb_dw_prvdr_id,
     month,
     COALESCE(
-      LAG(month) OVER (PARTITION BY member_id, srv_prvdr_id ORDER BY month)
+      LAG(month) OVER (PARTITION BY member_id, epdb_dw_prvdr_id ORDER BY month)
         < DATE_SUB(month, INTERVAL 12 MONTH),
       TRUE) AS is_new_patient
   FROM pair_months
@@ -107,7 +122,7 @@ mbr_months AS (
 aged AS (
   SELECT
     s.member_id,
-    s.srv_prvdr_id,
+    s.epdb_dw_prvdr_id,
     s.srv_start_dt,
     s.month,
     s.mbr_county_cd,
@@ -120,12 +135,12 @@ aged AS (
     ON s.member_id = m.member_id
     AND m.mo BETWEEN DATE_SUB(s.month, INTERVAL 3 MONTH) AND s.month
   QUALIFY ROW_NUMBER() OVER (
-    PARTITION BY s.member_id, s.srv_prvdr_id, s.srv_start_dt
+    PARTITION BY s.member_id, s.epdb_dw_prvdr_id, s.srv_start_dt
     ORDER BY m.mo DESC) = 1
 )
 SELECT
   a.member_id,
-  a.srv_prvdr_id,
+  a.epdb_dw_prvdr_id,
   a.srv_start_dt,
   a.month,
   a.mbr_county_cd,
@@ -142,7 +157,7 @@ SELECT
 FROM aged a
 JOIN flagged f
   ON a.member_id = f.member_id
-  AND a.srv_prvdr_id = f.srv_prvdr_id
+  AND a.epdb_dw_prvdr_id = f.epdb_dw_prvdr_id
   AND a.month = f.month
 WHERE a.month BETWEEN DATE '2024-01-01' AND DATE '2025-12-01'
 """
@@ -160,13 +175,14 @@ def q(client, label, sql):
 
 def main():
     client = cfg.client()
+    _assert_claims_schema(client)
     client.query(DDL).result()
     print(f"table created: {OUT}")
 
     keys = q(client, "row count and key uniqueness (R2)", f"""
         SELECT COUNT(*) AS row_count,
                COUNT(DISTINCT CONCAT(CAST(member_id AS STRING), '|',
-                                     CAST(srv_prvdr_id AS STRING), '|',
+                                     CAST(epdb_dw_prvdr_id AS STRING), '|',
                                      CAST(srv_start_dt AS STRING))) AS distinct_keys,
                COUNTIF(is_new_patient IS NULL) AS null_new_flag,
                COUNTIF(age_band IS NULL) AS null_age_band,
@@ -175,7 +191,7 @@ def main():
 
     recount = q(client, "independent visit recount from raw claims (R1)", f"""
         SELECT COUNT(DISTINCT CONCAT(CAST(c.member_id AS STRING), '|',
-                                     CAST(c.srv_prvdr_id AS STRING), '|',
+                                     CAST(c.epdb_dw_prvdr_id AS STRING), '|',
                                      CAST(c.srv_start_dt AS STRING))) AS raw_visits
         FROM `{CLAIMS}` c
         JOIN `{CTY}` rc

@@ -19,7 +19,7 @@ SCOPE : R6 restated: rows re-checked against the FL/OH/AZ/IL footprint via
 R3    : Attribution = PROVIDER county (capacity side). This profile
         describes providers where they practice; the member-county join
         below is scope re-assertion only and is never stored.
-GRAIN : srv_prvdr_id.
+GRAIN : epdb_dw_prvdr_id.
 INPUTS: md1_visits_base (batch A2 output), cfg.table("ref_county")
 OUTPUT: md1_provider_profile (BigQuery table).
 Run   : python model_and_dashboard_v1/03_rates/09_provider_profile.py
@@ -58,6 +58,21 @@ OUT    = cfg.src("md1_provider_profile")
 
 FOOTPRINT = "('FL', 'OH', 'AZ', 'IL')"
 
+VISITS_REQUIRED = ("member_id", "epdb_dw_prvdr_id", "srv_start_dt", "month",
+                   "mbr_county_cd", "specialty_ctg_cd", "prvdr_county",
+                   "prvdr_submarket", "is_new_patient", "age_band")
+
+
+def _assert_visits_schema(client):
+    present = {r["column_name"] for r in client.query(
+        "SELECT column_name FROM "
+        "`anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.INFORMATION_SCHEMA.COLUMNS` "
+        "WHERE table_name = 'md1_visits_base'").result()}
+    missing = [c for c in VISITS_REQUIRED if c not in present]
+    assert not missing, (
+        f"SCHEMA GUARD FAILED: md1_visits_base is missing columns {missing}; "
+        f"the provider id must be epdb_dw_prvdr_id (rebuild notebook 04)")
+
 DDL = f"""
 CREATE OR REPLACE TABLE `{OUT}`
 OPTIONS (labels=[("owner", "deepan_thulasi_aetna_com")])
@@ -70,45 +85,45 @@ WITH scoped AS (
   WHERE rc.state_cd IN {FOOTPRINT}
 ),
 spec_modal AS (
-  SELECT srv_prvdr_id, specialty_ctg_cd, COUNT(*) AS spec_visits
+  SELECT epdb_dw_prvdr_id, specialty_ctg_cd, COUNT(*) AS spec_visits
   FROM scoped
-  GROUP BY srv_prvdr_id, specialty_ctg_cd
+  GROUP BY epdb_dw_prvdr_id, specialty_ctg_cd
   QUALIFY ROW_NUMBER() OVER (
-    PARTITION BY srv_prvdr_id
+    PARTITION BY epdb_dw_prvdr_id
     ORDER BY spec_visits DESC, specialty_ctg_cd ASC) = 1
 ),
 cty_modal AS (
-  SELECT srv_prvdr_id, prvdr_county, COUNT(*) AS cty_visits
+  SELECT epdb_dw_prvdr_id, prvdr_county, COUNT(*) AS cty_visits
   FROM scoped
-  GROUP BY srv_prvdr_id, prvdr_county
+  GROUP BY epdb_dw_prvdr_id, prvdr_county
   QUALIFY ROW_NUMBER() OVER (
-    PARTITION BY srv_prvdr_id
+    PARTITION BY epdb_dw_prvdr_id
     ORDER BY cty_visits DESC, prvdr_county ASC) = 1
 ),
 sm_modal AS (
-  SELECT srv_prvdr_id, prvdr_submarket, COUNT(*) AS sm_visits
+  SELECT epdb_dw_prvdr_id, prvdr_submarket, COUNT(*) AS sm_visits
   FROM scoped
-  GROUP BY srv_prvdr_id, prvdr_submarket
+  GROUP BY epdb_dw_prvdr_id, prvdr_submarket
   QUALIFY ROW_NUMBER() OVER (
-    PARTITION BY srv_prvdr_id
+    PARTITION BY epdb_dw_prvdr_id
     ORDER BY sm_visits DESC, prvdr_submarket ASC) = 1
 ),
 monthly_2025 AS (
-  SELECT srv_prvdr_id, month, COUNT(*) AS month_visits
+  SELECT epdb_dw_prvdr_id, month, COUNT(*) AS month_visits
   FROM scoped
   WHERE EXTRACT(YEAR FROM month) = 2025
-  GROUP BY srv_prvdr_id, month
+  GROUP BY epdb_dw_prvdr_id, month
 ),
 monthly_agg AS (
-  SELECT srv_prvdr_id,
+  SELECT epdb_dw_prvdr_id,
          SUM(month_visits) / 12.0 AS monthly_visits_2025_avg,
          MAX(month_visits) AS monthly_visits_2025_max
   FROM monthly_2025
-  GROUP BY srv_prvdr_id
+  GROUP BY epdb_dw_prvdr_id
 ),
 totals AS (
   SELECT
-    srv_prvdr_id,
+    epdb_dw_prvdr_id,
     COUNT(*) AS visits_total,
     COUNTIF(EXTRACT(YEAR FROM month) = 2024) AS visits_2024,
     COUNTIF(EXTRACT(YEAR FROM month) = 2025) AS visits_2025,
@@ -122,10 +137,10 @@ totals AS (
     COUNTIF(EXTRACT(YEAR FROM month) = 2025 AND age_band = '75-84') AS v_75_84,
     COUNTIF(EXTRACT(YEAR FROM month) = 2025 AND age_band = '85p') AS v_85p
   FROM scoped
-  GROUP BY srv_prvdr_id
+  GROUP BY epdb_dw_prvdr_id
 )
 SELECT
-  t.srv_prvdr_id,
+  t.epdb_dw_prvdr_id,
   s.specialty_ctg_cd,
   SAFE_DIVIDE(s.spec_visits, t.visits_total) AS specialty_share,
   c.prvdr_county,
@@ -145,10 +160,10 @@ SELECT
   t.null_age_visits,
   t.distinct_members_2025
 FROM totals t
-JOIN spec_modal s ON t.srv_prvdr_id = s.srv_prvdr_id
-JOIN cty_modal c ON t.srv_prvdr_id = c.srv_prvdr_id
-JOIN sm_modal sm ON t.srv_prvdr_id = sm.srv_prvdr_id
-LEFT JOIN monthly_agg ma ON t.srv_prvdr_id = ma.srv_prvdr_id
+JOIN spec_modal s ON t.epdb_dw_prvdr_id = s.epdb_dw_prvdr_id
+JOIN cty_modal c ON t.epdb_dw_prvdr_id = c.epdb_dw_prvdr_id
+JOIN sm_modal sm ON t.epdb_dw_prvdr_id = sm.epdb_dw_prvdr_id
+LEFT JOIN monthly_agg ma ON t.epdb_dw_prvdr_id = ma.epdb_dw_prvdr_id
 """
 
 
@@ -164,12 +179,13 @@ def q(client, label, sql):
 
 def main():
     client = cfg.client()
+    _assert_visits_schema(client)
     client.query(DDL).result()
     print(f"table created: {OUT}")
 
     keys = q(client, "row count, key uniqueness, share bounds (R2)", f"""
         SELECT COUNT(*) AS row_count,
-               COUNT(DISTINCT srv_prvdr_id) AS distinct_keys,
+               COUNT(DISTINCT epdb_dw_prvdr_id) AS distinct_keys,
                COUNTIF(new_patient_share_2025 IS NOT NULL
                        AND (new_patient_share_2025 < 0
                             OR new_patient_share_2025 > 1)) AS bad_new_share
@@ -189,7 +205,7 @@ def main():
           AND share_75_84 IS NOT NULL AND share_85p IS NOT NULL""")[0]
 
     assert keys["row_count"] == keys["distinct_keys"], (
-        f"GATE FAILED (R2): srv_prvdr_id not unique: {keys}")
+        f"GATE FAILED (R2): epdb_dw_prvdr_id not unique: {keys}")
     assert keys["bad_new_share"] == 0, (
         f"GATE FAILED (R2): {keys['bad_new_share']} providers with "
         f"new_patient_share_2025 outside 0-1")

@@ -101,3 +101,15 @@ Alternatives considered: Computing demand directly from age-band visit
 rates with conditions as context only (the D08 design); rejected because
 the condition display would not drive demand and no sickness lever would
 be possible.
+
+## D10 — [date]
+
+Correction entry.
+Decision: The claims provider id fact is corrected from srv_prvdr_id to
+epdb_dw_prvdr_id (INT64) after schema re-verification via
+INFORMATION_SCHEMA. Scripts 01, 04, 09 and the data dictionary were
+updated in this commit, and those scripts now carry schema asserts
+guarding the column.
+Reason: The earlier recording was a misreading during review; the
+re-verified schema is authoritative.
+Alternatives considered: None; a factual correction.

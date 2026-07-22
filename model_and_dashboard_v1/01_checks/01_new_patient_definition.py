@@ -2,9 +2,9 @@
 01 - new-patient definition   [PYTHON / read-only BigQuery checks]
 
 WHAT  : Re-derives and validates the 12-month new-patient rule on the
-        rebuilt claims table using srv_prvdr_id (the only provider id,
-        per the data dictionary). Visit key = distinct member_id x
-        srv_prvdr_id x srv_start_dt. Months 2024-01 through 2025-12 are
+        claims table using epdb_dw_prvdr_id (INT64, the provider id per
+        the corrected data dictionary; a schema guard asserts it exists).
+        Visit key = distinct member_id x epdb_dw_prvdr_id x srv_start_dt. Months 2024-01 through 2025-12 are
         reported; 2023 serves as lookback memory only. Prints the monthly
         new-share series, the 2024 vs 2025 averages, and a sensitivity of
         the 2025 average under 6- and 18-month windows.
@@ -49,7 +49,21 @@ CLAIMS = "anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_analysi
 CTY    = cfg.table("ref_county")
 
 FOOTPRINT = "('FL', 'OH', 'AZ', 'IL')"
-VISIT_KEY = ("CONCAT(CAST(s.member_id AS STRING), '|', CAST(s.srv_prvdr_id AS STRING), "
+
+CLAIMS_REQUIRED = ("member_id", "epdb_dw_prvdr_id", "srv_start_dt", "age_nbr",
+                   "business_ln_cd", "mbr_county_cd")
+
+
+def _assert_claims_schema(client):
+    present = {r["column_name"] for r in client.query(
+        "SELECT column_name FROM "
+        "`anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.INFORMATION_SCHEMA.COLUMNS` "
+        "WHERE table_name = 'A870800_medicare_analysis_2025_claims'").result()}
+    missing = [c for c in CLAIMS_REQUIRED if c not in present]
+    assert not missing, (
+        f"SCHEMA GUARD FAILED: A870800_medicare_analysis_2025_claims is missing "
+        f"columns {missing}; the provider id must be epdb_dw_prvdr_id")
+VISIT_KEY = ("CONCAT(CAST(s.member_id AS STRING), '|', CAST(s.epdb_dw_prvdr_id AS STRING), "
              "'|', CAST(s.srv_start_dt AS STRING))")
 
 
@@ -58,7 +72,7 @@ def monthly_new_share_sql(window_months):
     WITH scoped AS (
       SELECT DISTINCT
         c.member_id,
-        c.srv_prvdr_id,
+        c.epdb_dw_prvdr_id,
         c.srv_start_dt,
         DATE_TRUNC(c.srv_start_dt, MONTH) AS month
       FROM `{CLAIMS}` c
@@ -69,15 +83,15 @@ def monthly_new_share_sql(window_months):
         AND c.business_ln_cd IN ('CP', 'ME')
     ),
     pair_months AS (
-      SELECT DISTINCT member_id, srv_prvdr_id, month FROM scoped
+      SELECT DISTINCT member_id, epdb_dw_prvdr_id, month FROM scoped
     ),
     flagged AS (
       SELECT
         member_id,
-        srv_prvdr_id,
+        epdb_dw_prvdr_id,
         month,
         COALESCE(
-          LAG(month) OVER (PARTITION BY member_id, srv_prvdr_id ORDER BY month)
+          LAG(month) OVER (PARTITION BY member_id, epdb_dw_prvdr_id ORDER BY month)
             < DATE_SUB(month, INTERVAL {window_months} MONTH),
           TRUE) AS is_new
       FROM pair_months
@@ -92,7 +106,7 @@ def monthly_new_share_sql(window_months):
     FROM scoped s
     JOIN flagged f
       ON s.member_id = f.member_id
-      AND s.srv_prvdr_id = f.srv_prvdr_id
+      AND s.epdb_dw_prvdr_id = f.epdb_dw_prvdr_id
       AND s.month = f.month
     WHERE f.month BETWEEN DATE '2024-01-01' AND DATE '2025-12-01'
     GROUP BY f.month
@@ -108,6 +122,7 @@ def avg_share(rows, year):
 
 def main():
     client = cfg.client()
+    _assert_claims_schema(client)
 
     print("=== monthly new-patient share, 12-month window ===")
     rows12 = [dict(r) for r in client.query(monthly_new_share_sql(12)).result()]

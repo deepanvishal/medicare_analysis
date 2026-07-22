@@ -45,24 +45,26 @@ Claim-line extract for the demand/capacity work. Grain: one row per claim
 line (not per visit; visits are derived). Status: VERIFIED-IN-CODE as a
 table; the schema has TWO GENERATIONS in this repo (see conflict below).
 
-**Provider id RESOLVED (VERIFIED-IN-BQ, Resolved gap 1).** The live table
-contains ONLY `srv_prvdr_id` (STRING). `epdb_dw_prvdr_id` and
-`claim_line_id` do not exist; the table was rebuilt AFTER dc_v2 notebook
-46 last ran, so dc_v2 code selecting `epdb_dw_prvdr_id` (46, 48, 55, 57)
-will fail against the rebuilt table. Observed column list: member_id,
-age_nbr, gender_cd, mbr_county_cd, mbr_submarket, srv_start_dt,
-pri_icd9_dx_cd, allowed_amt, business_ln_cd, srv_prvdr_id, prvdr_county,
-prvdr_submarket, specialty_ctg_cd, plus zip and state columns as observed.
+**Provider id CORRECTED (VERIFIED-IN-BQ by INFORMATION_SCHEMA
+screenshot).** The provider id column is `epdb_dw_prvdr_id` (INT64).
+`srv_prvdr_id` does NOT exist; the earlier dictionary entry recording the
+opposite was a misreading during review — dc_v2 code selecting
+`epdb_dw_prvdr_id` was correct all along. `claim_line_id` remains absent.
+Observed full column list with types: member_id (INT64), age_nbr (INT64),
+gender_cd (STRING), mbr_county_cd (STRING), mbr_submarket (STRING),
+srv_start_dt (DATE), pri_icd9_dx_cd (STRING), allowed_amt (NUMERIC),
+business_ln_cd (STRING), epdb_dw_prvdr_id (INT64), prvdr_county (STRING),
+prvdr_submarket (STRING), specialty_ctg_cd (STRING).
 The `srv_start_dt` window is settled: 2023-01-01 to 2025-12-31,
 VERIFIED-IN-BQ (Resolved gap 2).
 
 | Column | Type | Meaning | Status | Source |
 |---|---|---|---|---|
-| member_id | - | member identifier | VERIFIED-IN-BQ | dc_v2/03_demand/46_demand_history_table.py; GAP 1 schema output |
-| srv_prvdr_id | STRING | the ONLY provider id in the live table; the visit key and new-patient rule must use it | VERIFIED-IN-BQ | GAP 1 schema output (Resolved gap 1); expanded_scope/32_dc_rate.py |
-| epdb_dw_prvdr_id | - | HISTORICAL: does not exist in the rebuilt table; dc_v2 code selecting it will fail | VERIFIED-IN-BQ (absent) | GAP 1 schema output; dc_v2/03_demand/46_demand_history_table.py |
-| claim_line_id | - | HISTORICAL: does not exist in the rebuilt table | VERIFIED-IN-BQ (absent) | GAP 1 schema output; expanded_scope/32_dc_rate.py |
-| gender_cd | STRING | member gender code | VERIFIED-IN-BQ | GAP 1 schema output |
+| member_id | INT64 | member identifier | VERIFIED-IN-BQ | INFORMATION_SCHEMA screenshot; dc_v2/03_demand/46_demand_history_table.py |
+| epdb_dw_prvdr_id | INT64 | the provider id; the visit key and new-patient rule use it (CAST to STRING when concatenating) | VERIFIED-IN-BQ | INFORMATION_SCHEMA screenshot; dc_v2/03_demand/46_demand_history_table.py |
+| srv_prvdr_id | - | CORRECTION: never existed in the live table; the prior entry claiming it was the only id was a misreading during review | VERIFIED-IN-BQ (absent) | INFORMATION_SCHEMA screenshot |
+| claim_line_id | - | does not exist in the rebuilt table | VERIFIED-IN-BQ (absent) | INFORMATION_SCHEMA screenshot |
+| gender_cd | STRING | member gender code | VERIFIED-IN-BQ | INFORMATION_SCHEMA screenshot |
 | srv_start_dt | date-like (DATE_TRUNC works) | service date; the visit-key date; window 2023-01-01 to 2025-12-31 | VERIFIED-IN-CODE; window VERIFIED-IN-BQ | dc_v2/03_demand/46_demand_history_table.py; user confirmation (Resolved gap 2) |
 | pri_icd9_dx_cd | string-like (TRIM/REPLACE) | PRIMARY diagnosis code only; may carry dots | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
 | age_nbr | numeric | member age at claim | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
@@ -251,10 +253,6 @@ All plain-dataset names via cfg.src(); all VERIFIED-IN-CODE as written.
 Note: these are legitimate READ sources for the new pipeline, but their
 correctness is not assumed (fresh-build rule).
 
-**WARNING (Resolved gaps 1 and 12): all dc2 tables predate the claims
-rebuild that removed epdb_dw_prvdr_id. They are readable as historical
-reference only; they must NOT be treated as rebuildable or current — the
-dc_v2 code that built them selects a column that no longer exists.**
 Observed row counts (VERIFIED-IN-BQ): dc2_baselines 11,696;
 dc2_capacity_county 197,397; dc2_capacity_predictions 197,397;
 dc2_capacity_provider 4,895,666; dc2_capacity_provider_future 203,920;
@@ -418,9 +416,11 @@ market_max_demand (source: dc_v2/06_weave/55_weave.py).
 20. Categorical pandas columns break .map().fillna() band logic — cast a
     temporary series to str first (source:
     dc_v2/05_models/51_capacity_models.py county_band_series).
-21. The visit key and the 12-month new-patient rule must use
-    `srv_prvdr_id`; dc_v2 code selecting `epdb_dw_prvdr_id` will fail
-    against the rebuilt claims table (VERIFIED-IN-BQ, Resolved gap 1).
+21. The visit key and the 12-month new-patient rule use
+    `epdb_dw_prvdr_id` (INT64; CAST to STRING when concatenating into the
+    visit key). This fact was misrecorded once as srv_prvdr_id during a
+    review misreading; scripts 01, 04 and 09 now carry schema asserts
+    that guard it (VERIFIED-IN-BQ, INFORMATION_SCHEMA screenshot).
 22. Provider county names need one normalization rule (Saint to St.,
     trim, upper) before capacity joins — the reference stores St. forms
     while claims carry Saint Lucie / Saint Johns variants plus blanks.
@@ -455,11 +455,11 @@ No open BigQuery verification gaps remain as of this update.
 
 ### Resolved
 
-1. RESOLVED (VERIFIED-IN-BQ): the claims extract contains ONLY
-   `srv_prvdr_id` (STRING); `epdb_dw_prvdr_id` and `claim_line_id` do not
-   exist. The table was rebuilt after dc_v2 notebook 46 last ran; dc_v2
-   code selecting `epdb_dw_prvdr_id` will fail, and all dc2_* tables are
-   historical reference only.
+1. RESOLVED, then CORRECTED (VERIFIED-IN-BQ): the provider id is
+   `epdb_dw_prvdr_id` (INT64); `srv_prvdr_id` does not exist. The earlier
+   resolution recording the opposite was a misreading during review;
+   re-verified by INFORMATION_SCHEMA screenshot. `claim_line_id` remains
+   absent.
 2. RESOLVED (VERIFIED-IN-BQ): `srv_start_dt` window confirmed 2023-01-01
    to 2025-12-31.
 3. RESOLVED (VERIFIED-IN-BQ): `business_ln_cd` carries exactly two
@@ -508,8 +508,7 @@ No open BigQuery verification gaps remain as of this update.
     dc2_capacity_predictions 197,397; dc2_capacity_provider 4,895,666;
     dc2_capacity_provider_future 203,920; dc2_demand_base 335,761;
     dc2_demand_chronic 469,364; dc2_demand_predictions 335,761;
-    dc2_weave 10,573. Per Resolved gap 1, these predate the claims
-    rebuild and are historical reference only.
+    dc2_weave 10,573.
 13. RESOLVED (VERIFIED-IN-BQ): `mbr_submarket` and `prvdr_submarket`
     carry many values beyond the four footprint states (FL South, IL
     Chicago, FL West, AZ Phoenix, OH Columbus, NJ North, NY Metro, TX
