@@ -51,7 +51,7 @@ demand math; per-condition visit rates come via the visit-splitting model
 | 20 | 05_calibration | 20_referee_comparison.py | Chain output vs dc_v2 demand model forecast | outputs of 19, dc2_demand_predictions | Divergence explained and logged |
 | 21 | 06_outputs | 21_dashboard_extracts.py | EXECUTED SPEC. Writes the seven parquet extracts + manifest.json to 07_dashboard/extracts/: enrollment, growth_context (label only, defaults 0 per D11), sickness_rates, visit_rates, county_calibration, providers (capacity v0 per D14), conditions_meta | outputs of 06, 07, 08, 11 (context), 16 v0 | No empty extract (R1); enrollment counties match 2025-12 exactly (R4); manifest carries the capacity=v0 line |
 | 22 | 06_outputs | 22_excel_report.py | Deliverable 1 | outputs of 21 and model documentation | Report builds; numbers match extracts |
-| 23 | 07_dashboard | whatif_dashboard.py | Deliverable 2, real data wired in | outputs of 21 | Dashboard math matches 19 calibration |
+| 23 | 07_dashboard | whatif_dashboard.py | Deliverable 2, WIRED (MVP): loads the seven 21 extracts + manifest; defaults 0 with last-year labels; capacity v0 banner | outputs of 21 | Dashboard math matches 19 calibration |
 
 Run-order exception: notebook 08 runs AFTER 13-15 (it consumes the
 visit-splitting model), despite its lower number. Notebook 05b runs
