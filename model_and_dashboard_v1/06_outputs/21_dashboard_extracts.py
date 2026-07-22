@@ -1,17 +1,23 @@
 """
 21 - dashboard extracts   [PYTHON / BigQuery read -> parquet files]
 
-WHAT  : Writes the seven parquet extracts the dashboard loads, plus
+WHAT  : Writes the eight parquet extracts the dashboards load, plus
         manifest.json, to model_and_dashboard_v1/07_dashboard/extracts/
-        (folder created if absent). The dashboard reads ONLY these
+        (folder created if absent). The dashboards read ONLY these
         files. Extracts: enrollment (2025-12 snapshot per county x band
-        with state), growth_context (last-year yoy per county x band -
-        CONTEXT LABEL ONLY, slider defaults are 0 per D11),
-        sickness_rates (2025, tenure ALL, non-null prevalence only),
-        visit_rates (md1_visit_rates as-is), county_calibration
-        (shipped factor per county x specialty), providers
-        (md1_capacity_v0 all columns - capacity is v0 observed-peak per
-        D14), conditions_meta (distinct condition + description).
+        with state and county_name from ms_ref_county, R7-gated),
+        growth_context (last-year yoy per county x band - CONTEXT LABEL
+        ONLY, slider defaults are 0 per D11), sickness_rates (2025,
+        tenure ALL, non-null prevalence only), visit_rates
+        (md1_visit_rates plus per-specialty deflation_factor joined
+        from md1_visitsplit_rates for the v2 fit-quality view),
+        county_calibration (shipped factor per county x specialty),
+        providers (md1_capacity_v0 all columns - capacity is v0
+        observed-peak per D14), conditions_meta (distinct condition +
+        description), other_condition_prevalence (county x band share
+        of 2025 tenure-ALL members holding at least one condition
+        outside the kept set - closes the OTHER_CONDITION baseline gap
+        in the dashboard cascade; R2-gated 0..1, key unique).
         Manifest carries row counts, source tables, build timestamp,
         and the line "capacity=v0 observed-peak; demand=calibrated to
         2025 actuals".
@@ -25,8 +31,10 @@ GRAIN : One parquet per extract; grains listed in the extract table of
         03_DELIVERABLE_DASH.md.
 INPUTS: md1_enrollment_history (06), md1_growth_defaults (11),
         md1_sickness_rates (07), md1_visit_rates and
-        md1_county_calibration (08), md1_capacity_v0 (16 v0)
-OUTPUT: seven .parquet files + manifest.json under
+        md1_county_calibration (08), md1_visitsplit_rates (14,
+        deflation), md1_capacity_v0 (16 v0), md1_condition_flags and
+        md1_member_base (batch A2), cfg.table("ref_county")
+OUTPUT: eight .parquet files + manifest.json under
         model_and_dashboard_v1/07_dashboard/extracts/ (no BigQuery
         writes).
 Run   : python model_and_dashboard_v1/06_outputs/21_dashboard_extracts.py
@@ -61,12 +69,16 @@ def _expanded_scope_dir():
 sys.path.insert(0, _expanded_scope_dir())
 import config as cfg
 
-ENR   = cfg.src("md1_enrollment_history")
-GROW  = cfg.src("md1_growth_defaults")
-SICK  = cfg.src("md1_sickness_rates")
-RATES = cfg.src("md1_visit_rates")
-CAL   = cfg.src("md1_county_calibration")
-CAP   = cfg.src("md1_capacity_v0")
+ENR    = cfg.src("md1_enrollment_history")
+GROW   = cfg.src("md1_growth_defaults")
+SICK   = cfg.src("md1_sickness_rates")
+RATES  = cfg.src("md1_visit_rates")
+VSPLIT = cfg.src("md1_visitsplit_rates")
+CAL    = cfg.src("md1_county_calibration")
+CAP    = cfg.src("md1_capacity_v0")
+CFLAGS = cfg.src("md1_condition_flags")
+MBASE  = cfg.src("md1_member_base")
+CTY    = cfg.table("ref_county")
 
 FOOTPRINT = "('FL', 'OH', 'AZ', 'IL')"
 
@@ -78,11 +90,15 @@ MANIFEST_NOTE = "capacity=v0 observed-peak; demand=calibrated to 2025 actuals"
 
 EXTRACTS = [
     ("enrollment.parquet", "md1_enrollment_history", f"""
-        SELECT mbr_county_cd, state_cd, age_band, members
-        FROM `{ENR}`
-        WHERE month = DATE '2025-12-01'
-          AND state_cd IN {FOOTPRINT}
-        ORDER BY mbr_county_cd, age_band"""),
+        SELECT e.mbr_county_cd, e.state_cd, e.age_band, e.members,
+               rc.county_name
+        FROM `{ENR}` e
+        JOIN `{CTY}` rc
+          ON LPAD(TRIM(CAST(e.mbr_county_cd AS STRING)), 5, '0')
+             = rc.county_fips
+        WHERE e.month = DATE '2025-12-01'
+          AND e.state_cd IN {FOOTPRINT}
+        ORDER BY e.mbr_county_cd, e.age_band"""),
     # growth_context is a context label only: slider defaults are 0 per
     # D11; last_year_yoy_pct feeds the "last year: +X%" label, never the
     # slider position.
@@ -102,8 +118,14 @@ EXTRACTS = [
           AND prevalence IS NOT NULL
         ORDER BY mbr_county_cd, age_band, condition"""),
     ("visit_rates.parquet", "md1_visit_rates", f"""
-        SELECT * FROM `{RATES}`
-        ORDER BY cms_specialty, condition"""),
+        SELECT r.*, d.deflation_factor
+        FROM `{RATES}` r
+        JOIN (SELECT cms_specialty,
+                     ANY_VALUE(deflation_factor) AS deflation_factor
+              FROM `{VSPLIT}`
+              GROUP BY cms_specialty) d
+          ON r.cms_specialty = d.cms_specialty
+        ORDER BY r.cms_specialty, r.condition"""),
     ("county_calibration.parquet", "md1_county_calibration", f"""
         SELECT mbr_county_cd, state_cd, cms_specialty, calibration_factor
         FROM `{CAL}`
@@ -117,10 +139,49 @@ EXTRACTS = [
         FROM `{SICK}`
         GROUP BY condition
         ORDER BY condition"""),
+    ("other_condition_prevalence.parquet",
+     "md1_condition_flags + md1_member_base + md1_visit_rates", f"""
+        WITH kept AS (
+          SELECT DISTINCT condition
+          FROM `{RATES}`
+          WHERE condition NOT IN ('BASE_RATE', 'OTHER_CONDITION')
+        ),
+        member_year AS (
+          SELECT b.member_id, b.mbr_county_cd, b.age_band
+          FROM `{MBASE}` b
+          JOIN `{CTY}` rc
+            ON LPAD(TRIM(CAST(b.mbr_county_cd AS STRING)), 5, '0')
+               = rc.county_fips
+          WHERE rc.state_cd IN {FOOTPRINT}
+            AND b.age_band IS NOT NULL
+            AND EXTRACT(YEAR FROM b.month) = 2025
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY b.member_id
+                                     ORDER BY b.month DESC) = 1
+        ),
+        other_members AS (
+          SELECT DISTINCT f.member_id
+          FROM `{CFLAGS}` f
+          WHERE f.year = 2025
+            AND CAST(f.HCC_v24 AS STRING) NOT IN
+                (SELECT condition FROM kept)
+        )
+        SELECT my.mbr_county_cd, my.age_band,
+               COUNT(*) AS members,
+               COUNTIF(o.member_id IS NOT NULL) AS members_with_other,
+               SAFE_DIVIDE(COUNTIF(o.member_id IS NOT NULL), COUNT(*))
+                 AS other_prevalence
+        FROM member_year my
+        LEFT JOIN other_members o ON my.member_id = o.member_id
+        GROUP BY my.mbr_county_cd, my.age_band
+        ORDER BY my.mbr_county_cd, my.age_band"""),
 ]
 
 
 def main():
+    print("NOTE: extracts must be REGENERATED after any pipeline change - "
+          "the dashboards read only what this script last wrote. v2 needs "
+          "the eight-file set (county_name, deflation_factor and "
+          "other_condition_prevalence included).")
     client = cfg.client()
     os.makedirs(EXTRACT_DIR, exist_ok=True)
 
@@ -151,6 +212,23 @@ def main():
         f"GATE FAILED (R4): enrollment extract has {extract_counties} "
         f"counties vs {county_check['county_count']} in "
         f"md1_enrollment_history 2025-12")
+
+    edf = frames["enrollment.parquet"]
+    unnamed = edf["county_name"].isna().sum() + \
+        (edf["county_name"].astype(str).str.strip() == "").sum()
+    assert unnamed == 0, (
+        f"GATE FAILED (R7): {unnamed} enrollment rows with no county_name "
+        f"after the ms_ref_county join")
+
+    odf = frames["other_condition_prevalence.parquet"]
+    other_keys = odf[["mbr_county_cd", "age_band"]].drop_duplicates()
+    assert len(other_keys) == len(odf), (
+        f"GATE FAILED (R2): other_condition_prevalence key not unique at "
+        f"county x band: {len(odf)} rows, {len(other_keys)} keys")
+    bad_prev = ((odf["other_prevalence"] < 0)
+                | (odf["other_prevalence"] > 1)).sum()
+    assert bad_prev == 0, (
+        f"GATE FAILED (R2): {bad_prev} other_prevalence values outside 0..1")
 
     manifest_path = os.path.join(EXTRACT_DIR, "manifest.json")
     with open(manifest_path, "w", encoding="utf-8") as f:
