@@ -45,29 +45,29 @@ Claim-line extract for the demand/capacity work. Grain: one row per claim
 line (not per visit; visits are derived). Status: VERIFIED-IN-CODE as a
 table; the schema has TWO GENERATIONS in this repo (see conflict below).
 
-**CONFLICT — provider id and line id (OPEN).** Older code
-(expanded_scope/30–38, demand_report.py, eda_runner.py) reads
-`srv_prvdr_id` and `claim_line_id`. Newer dc_v2 code (46, 48, 55, 57)
-reads `epdb_dw_prvdr_id` and never touches `claim_line_id`. dc_v2 docs say
-the extract was rebuilt with provider resolution via `epdb_dw_prvdr_id`
-case logic (source: expanded_scope/dc_v2/00_docs/data_decisions.md,
-DD 07). User observation now says only `srv_prvdr_id` remains in the live
-table, which contradicts the working dc_v2 code. Recheck query added to
-01_checks/test_data.sql (GAP 1 RECHECK); the provider-ID choice for the
-visit key stays UNVERIFIED until it runs. The `srv_start_dt` window is
-settled: 2023-01-01 to 2025-12-31, VERIFIED-IN-BQ (Resolved gap 2).
+**Provider id RESOLVED (VERIFIED-IN-BQ, Resolved gap 1).** The live table
+contains ONLY `srv_prvdr_id` (STRING). `epdb_dw_prvdr_id` and
+`claim_line_id` do not exist; the table was rebuilt AFTER dc_v2 notebook
+46 last ran, so dc_v2 code selecting `epdb_dw_prvdr_id` (46, 48, 55, 57)
+will fail against the rebuilt table. Observed column list: member_id,
+age_nbr, gender_cd, mbr_county_cd, mbr_submarket, srv_start_dt,
+pri_icd9_dx_cd, allowed_amt, business_ln_cd, srv_prvdr_id, prvdr_county,
+prvdr_submarket, specialty_ctg_cd, plus zip and state columns as observed.
+The `srv_start_dt` window is settled: 2023-01-01 to 2025-12-31,
+VERIFIED-IN-BQ (Resolved gap 2).
 
 | Column | Type | Meaning | Status | Source |
 |---|---|---|---|---|
-| member_id | - | member identifier | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
-| epdb_dw_prvdr_id | - | provider identifier (rebuilt extract per DD 07); user observation says it is ABSENT from the live table | UNVERIFIED pending GAP 1 recheck | dc_v2/03_demand/46_demand_history_table.py; user observation |
-| srv_prvdr_id | - | provider identifier (older extract generation); user observation says this is the one that remains | VERIFIED-IN-CODE (older files); presence per user observation, pending GAP 1 recheck | expanded_scope/32_dc_rate.py, demand_report.py; user observation |
-| claim_line_id | - | claim line identifier | VERIFIED-IN-CODE (older files only); presence post-rebuild UNVERIFIED (GAP 1 recheck lists all columns) | expanded_scope/32_dc_rate.py; dc_v2/00_docs/data_decisions.md DD 07 |
+| member_id | - | member identifier | VERIFIED-IN-BQ | dc_v2/03_demand/46_demand_history_table.py; GAP 1 schema output |
+| srv_prvdr_id | STRING | the ONLY provider id in the live table; the visit key and new-patient rule must use it | VERIFIED-IN-BQ | GAP 1 schema output (Resolved gap 1); expanded_scope/32_dc_rate.py |
+| epdb_dw_prvdr_id | - | HISTORICAL: does not exist in the rebuilt table; dc_v2 code selecting it will fail | VERIFIED-IN-BQ (absent) | GAP 1 schema output; dc_v2/03_demand/46_demand_history_table.py |
+| claim_line_id | - | HISTORICAL: does not exist in the rebuilt table | VERIFIED-IN-BQ (absent) | GAP 1 schema output; expanded_scope/32_dc_rate.py |
+| gender_cd | STRING | member gender code | VERIFIED-IN-BQ | GAP 1 schema output |
 | srv_start_dt | date-like (DATE_TRUNC works) | service date; the visit-key date; window 2023-01-01 to 2025-12-31 | VERIFIED-IN-CODE; window VERIFIED-IN-BQ | dc_v2/03_demand/46_demand_history_table.py; user confirmation (Resolved gap 2) |
 | pri_icd9_dx_cd | string-like (TRIM/REPLACE) | PRIMARY diagnosis code only; may carry dots | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
 | age_nbr | numeric | member age at claim | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
 | business_ln_cd | - | line of business; carries exactly two values, CP and ME | VERIFIED-IN-BQ (value set); VERIFIED-IN-CODE (usage) | user confirmation (Resolved gap 3); expanded_scope/32_dc_rate.py, 34_dc_book_utilization.py |
-| mbr_county_cd | code (LPAD to 5 works) | MEMBER county code — demand attribution | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
+| mbr_county_cd | 5-char string | MEMBER county code — demand attribution; stored clean at 5 characters (LPAD stays as harmless defense) | VERIFIED-IN-BQ (Resolved gap 4) | dc_v2/03_demand/46_demand_history_table.py; GAP 4 result |
 | mbr_submarket | - | member submarket; formerly the scope filter, now retired | VERIFIED-IN-CODE (column exists) | dc_v2/03_demand/46_demand_history_table.py header |
 | prvdr_county | name string (UPPER/TRIM match) | PROVIDER county NAME — capacity attribution | VERIFIED-IN-CODE | dc_v2/04_capacity/48_provider_history_table.py |
 | prvdr_submarket | string "XX ..." | provider submarket; state = UPPER(LEFT(...,2)) | VERIFIED-IN-CODE | expanded_scope/34_dc_book_utilization.py |
@@ -78,18 +78,24 @@ settled: 2023-01-01 to 2025-12-31, VERIFIED-IN-BQ (Resolved gap 2).
 ### 2.2 `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_analysis_membership`
 
 Monthly membership extract. Grain: member x month (eff_yr, eff_mo); one
-row = enrolled that month. Status: VERIFIED-IN-CODE.
+row = enrolled that month. Status: VERIFIED-IN-BQ. Observed columns:
+member_id, eff_yr, eff_mo, age_nbr, gender_cd, zip_cd, mbr_county_cd,
+mbr_state, mbr_submarket (GAP 7 schema output). Monthly coverage is
+continuous, no missing months, 2023-01 through 2025-12, with distinct
+member counts rising from about 20.3M (2023-01) through about 22.5M
+(2025-12) (Resolved gap 7).
 
 | Column | Type | Meaning | Status | Source |
 |---|---|---|---|---|
-| member_id | - | member identifier | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
-| eff_yr | castable INT64 | membership year | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
-| eff_mo | castable INT64 | membership month | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
-| age_nbr | numeric | member age | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
-| mbr_county_cd | code | member county code | VERIFIED-IN-CODE | dc_v2/06_weave/55_weave.py |
-| mbr_state | - | member state code; joined to rate-table state_cd ('FL' style) | VERIFIED-IN-CODE | dc_v2/05_models/53_baselines_and_ceilings.py |
-| mbr_submarket | - | member submarket; used only as IS NOT NULL historically | VERIFIED-IN-CODE (column exists) | dc_v2/03_demand/46_demand_history_table.py |
-| gender_cd | - | gender code | UNVERIFIED (docs/prompt only; no repo code reads it) | dc_v2/00_docs/data_decisions.md DD 08 |
+| member_id | - | member identifier | VERIFIED-IN-BQ | dc_v2/03_demand/46_demand_history_table.py; GAP 7 output |
+| eff_yr | castable INT64 | membership year | VERIFIED-IN-BQ | dc_v2/03_demand/46_demand_history_table.py; GAP 7 output |
+| eff_mo | castable INT64 | membership month | VERIFIED-IN-BQ | dc_v2/03_demand/46_demand_history_table.py; GAP 7 output |
+| age_nbr | numeric | member age | VERIFIED-IN-BQ | dc_v2/03_demand/46_demand_history_table.py; GAP 7 output |
+| gender_cd | STRING | gender code | VERIFIED-IN-BQ (Resolved gap 7) | GAP 7 schema output |
+| zip_cd | - | member zip | VERIFIED-IN-BQ | GAP 7 schema output |
+| mbr_county_cd | 5-char string | member county code; stored clean at 5 characters (Resolved gap 4) | VERIFIED-IN-BQ | dc_v2/06_weave/55_weave.py; GAP 4 result |
+| mbr_state | - | member state code; joined to rate-table state_cd ('FL' style) | VERIFIED-IN-BQ | dc_v2/05_models/53_baselines_and_ceilings.py; GAP 7 output |
+| mbr_submarket | - | member submarket; display context only, spans the whole book, includes nulls | VERIFIED-IN-BQ (Resolved gap 13) | dc_v2/03_demand/46_demand_history_table.py; GAP 13 result |
 
 ### 2.3 `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.HCC_ICD_Mapping_2025`
 
@@ -98,11 +104,12 @@ versions; code dedupes before joining). Status: VERIFIED-IN-CODE.
 
 | Column | Type | Meaning | Status | Source |
 |---|---|---|---|---|
-| diagnosis_code | string | ICD code, stored without dots; code still TRIMs and strips dots defensively | VERIFIED-IN-CODE | dc_v2/03_demand/46_demand_history_table.py |
-| HCC_v24 | - | CMS-HCC V24 category; mapped = HCC_v24 IS NOT NULL (decided rule) | VERIFIED-IN-CODE | dc_v2/01_hcc_chronic/40_h1_mapping_coverage.py; data_decisions.md DD 05 |
-| HCC_v28 | - | CMS-HCC V28 category | UNVERIFIED (docs only) | dc_v2/00_docs/data_decisions.md DD 05 |
-| is_pay_v24 | - | 'Yes'/'No'/'-' payment flag; identical criterion to HCC_v24 populated; decided NOT used as a filter | UNVERIFIED (docs record a run result; no repo code reads it) | data_decisions.md DD 05 mapped-filter verification |
-| description | - | ICD description (not an HCC category name) | UNVERIFIED (docs only) | demand_report.py history; docs |
+| diagnosis_code | STRING | ICD code, stored without dots; code still TRIMs and strips dots defensively | VERIFIED-IN-BQ | dc_v2/03_demand/46_demand_history_table.py; GAP 8 schema output |
+| HCC_v24 | STRING | CMS-HCC V24 category; mapped = HCC_v24 IS NOT NULL (decided rule) | VERIFIED-IN-BQ | dc_v2/01_hcc_chronic/40_h1_mapping_coverage.py; GAP 8 schema output |
+| HCC_v28 | STRING | CMS-HCC V28 category | VERIFIED-IN-BQ (Resolved gap 8) | GAP 8 schema output |
+| is_pay_v24 | STRING | payment flag; value set Yes, No, and dash; decided NOT used as a filter | VERIFIED-IN-BQ (Resolved gap 8) | GAP 8 result; data_decisions.md DD 05 |
+| is_pay_v28 | STRING | payment flag; value set Yes, No, and dash | VERIFIED-IN-BQ (Resolved gap 8) | GAP 8 result |
+| description | STRING | ICD description (not an HCC category name) | VERIFIED-IN-BQ (Resolved gap 8) | GAP 8 schema output |
 
 ### 2.4 `anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.mdcr_base_membership`
 
@@ -203,8 +210,9 @@ AHRQ CCIR chronic-condition reference loaded from CSV. Grain: icd_code.
 Status: VERIFIED-IN-CODE. Columns (explicit load schema): icd_code STRING
 (dot-free), icd_description STRING, chronic_indicator INT64 (0/1/9),
 chronic_label STRING (NOT_CHRONIC/CHRONIC/NO_DETERMINATION) (source:
-expanded_scope/30a_dc_ref_ccir.py). Expected ~75,725 rows per the loader's
-printed sanity line — UNVERIFIED until run.
+expanded_scope/30a_dc_ref_ccir.py). 75,725 rows with the expected
+chronic_label distribution (CHRONIC, NOT_CHRONIC, NO_DETERMINATION
+observed) — VERIFIED-IN-BQ (Resolved gap 10).
 
 ### 2.13 `A870800_medicare_supply_demand_ms_fact_gap_analysis` (cfg.table("fact_gap_analysis"))
 
@@ -242,6 +250,16 @@ notebook 53.
 All plain-dataset names via cfg.src(); all VERIFIED-IN-CODE as written.
 Note: these are legitimate READ sources for the new pipeline, but their
 correctness is not assumed (fresh-build rule).
+
+**WARNING (Resolved gaps 1 and 12): all dc2 tables predate the claims
+rebuild that removed epdb_dw_prvdr_id. They are readable as historical
+reference only; they must NOT be treated as rebuildable or current — the
+dc_v2 code that built them selects a column that no longer exists.**
+Observed row counts (VERIFIED-IN-BQ): dc2_baselines 11,696;
+dc2_capacity_county 197,397; dc2_capacity_predictions 197,397;
+dc2_capacity_provider 4,895,666; dc2_capacity_provider_future 203,920;
+dc2_demand_base 335,761; dc2_demand_chronic 469,364;
+dc2_demand_predictions 335,761; dc2_weave 10,573.
 
 ### 3.1 `dc2_demand_base`
 
@@ -362,9 +380,11 @@ market_max_demand (source: dc_v2/06_weave/55_weave.py).
    Union...); 48 filters through a DISTINCT-name semi-join to avoid row
    fan-out, and 55 prints a collision warning on the name-to-fips mapping
    (sources: 48 footprint_counties CTE; 55 norm_provider_county).
-10. `mbr_county_cd` is a CODE (zero-pad to 5 before joining county_fips);
-    `prvdr_county` is a NAME (UPPER/TRIM before joining county_name). AZ
-    FIPS lose leading zeros in some sources — always LPAD (sources:
+10. `mbr_county_cd` is a CODE; `prvdr_county` is a NAME (UPPER/TRIM before
+    joining county_name). County codes are stored as clean 5-character
+    strings in both extracts (VERIFIED-IN-BQ, Resolved gap 4); LPAD stays
+    as harmless defense. AZ FIPS still lose leading zeros in OTHER sources
+    such as census geo_id — LPAD there is load-bearing (sources:
     dc_v2/06_weave/55_weave.py normalization helpers; PLAN.md;
     expanded_scope/31_dc_county_population.py census geo_id LPAD).
 11. ICD join cleaning: UPPER(REPLACE(TRIM(code), '.', '')) on BOTH sides
@@ -398,6 +418,29 @@ market_max_demand (source: dc_v2/06_weave/55_weave.py).
 20. Categorical pandas columns break .map().fillna() band logic — cast a
     temporary series to str first (source:
     dc_v2/05_models/51_capacity_models.py county_band_series).
+21. The visit key and the 12-month new-patient rule must use
+    `srv_prvdr_id`; dc_v2 code selecting `epdb_dw_prvdr_id` will fail
+    against the rebuilt claims table (VERIFIED-IN-BQ, Resolved gap 1).
+22. Provider county names need one normalization rule (Saint to St.,
+    trim, upper) before capacity joins — the reference stores St. forms
+    while claims carry Saint Lucie / Saint Johns variants plus blanks.
+    Out-of-footprint provider volume (Boulder, Westchester, Dallas, Santa
+    Fe and similar) is excluded from capacity by design, not lost
+    (VERIFIED-IN-BQ, Resolved gap 5: unmatched share 0.1172).
+23. Demand scope is CMS-recognized physician specialties via the 43-row
+    bridge. The mapping was deliberately conservative: only Aetna
+    specialty codes with a clean CMS equivalent (matched on
+    specialty_ctg_cd and description) were bridged; ancillary, lab,
+    mid-level, and ambiguous codes (WLAB, VVNP, VPTH, VVDM, P, VVPA, VER,
+    VVHC and similar) were excluded by mapping policy. The 37.6 percent
+    out-of-bridge share is intentional and stable, not data loss; no
+    re-investigation needed. Any new pipeline restates this as a scope
+    decision. If CMS specialty definitions or code descriptions change,
+    the bridge needs re-review (VERIFIED-IN-BQ, Resolved gap 9).
+24. Submarket columns (`mbr_submarket`, `prvdr_submarket`) are display
+    context only: they span the whole book of business (NJ North, NY
+    Metro, TX Houston, CA Bay Area and similar) and include nulls. Never
+    use them as a footprint filter (VERIFIED-IN-BQ, Resolved gap 13).
 
 ---
 
@@ -408,39 +451,67 @@ model_and_dashboard_v1/01_checks/test_data.sql.
 
 ### Open
 
-1. `A870800_medicare_analysis_2025_claims`: user observation says only
-   `srv_prvdr_id` remains, which conflicts with working dc_v2 code
-   selecting `epdb_dw_prvdr_id`; recheck query added to test_data.sql
-   (GAP 1 RECHECK). The provider-ID choice for the visit key stays
-   UNVERIFIED until then. Also settles whether `claim_line_id` survives.
-4. Same table: `mbr_county_cd` format — 5-digit FIPS? Do AZ codes carry
-   leading zeros as stored?
-5. Same table: distinct `prvdr_county` values — casing/format match rate
-   against ms_ref_county.county_name under UPPER/TRIM.
-7. `A870800_medicare_analysis_membership`: does `gender_cd` exist? What
-   months does eff_yr/eff_mo actually cover, and are any months missing?
-8. `HCC_ICD_Mapping_2025`: confirm `HCC_v28`, `is_pay_v24`, `is_pay_v28`,
-   `description` exist and their value sets (docs claim
-   'Yes'/'No'/'-' for is_pay_v24).
-9. `specialty_ctg_cd`: full distinct value set in claims vs the 43-row
-   crosswalk's aetna_cd values — how much volume falls outside the bridge?
-10. `ms_dc_ref_ccir`: row count (~75,725 expected) and chronic_label
-    distribution match the loader's expectations.
-11. `hosp_list_cmi`: schema and state scope (queried by
-    00_check_data_availability.py without assuming columns).
-12. All `dc2_*` tables: exist and carry post-rerun row counts consistent
-    with the latest 46-55 run (age-60 floor and ref_county footprint
-    applied).
-13. `mbr_submarket` / `prvdr_submarket`: full value sets (footprint
-    submarket list), now that they are display/context columns rather
-    than filters.
+No open BigQuery verification gaps remain as of this update.
 
 ### Resolved
 
+1. RESOLVED (VERIFIED-IN-BQ): the claims extract contains ONLY
+   `srv_prvdr_id` (STRING); `epdb_dw_prvdr_id` and `claim_line_id` do not
+   exist. The table was rebuilt after dc_v2 notebook 46 last ran; dc_v2
+   code selecting `epdb_dw_prvdr_id` will fail, and all dc2_* tables are
+   historical reference only.
 2. RESOLVED (VERIFIED-IN-BQ): `srv_start_dt` window confirmed 2023-01-01
    to 2025-12-31.
 3. RESOLVED (VERIFIED-IN-BQ): `business_ln_cd` carries exactly two
    values, CP and ME.
+4. RESOLVED (VERIFIED-IN-BQ): zero rows with county-code length under 5
+   in both claims and membership; codes are stored as clean 5-character
+   strings. LPAD stays as harmless defense.
+5. RESOLVED (VERIFIED-IN-BQ): prvdr_county match against the county
+   reference — 733,188,951 total claim lines; 647,243,497 matched;
+   unmatched share 0.1172 (11.7 percent). Unmatched decomposes into
+   out-of-footprint counties (Boulder, Westchester, Dallas, Santa Fe and
+   similar — excluded from capacity by design), Florida spelling variants
+   (Saint Lucie and Saint Johns vs the reference's St. forms), and blank
+   values.
 6. RESOLVED (VERIFIED-IN-BQ): the mdcr_base_membership date column is
    `eff_dt`; one row = member-month confirmed. PLAN.md's `eff_df`
    reference is the historical error.
+7. RESOLVED (VERIFIED-IN-BQ): `gender_cd` exists (STRING). Observed
+   membership columns: member_id, eff_yr, eff_mo, age_nbr, gender_cd,
+   zip_cd, mbr_county_cd, mbr_state, mbr_submarket. Monthly coverage
+   continuous, no missing months, 2023-01 through 2025-12; distinct
+   member counts rise from about 20.3M (2023-01) to about 22.5M
+   (2025-12).
+8. RESOLVED (VERIFIED-IN-BQ): HCC mapping columns diagnosis_code,
+   description, HCC_v24, HCC_v28, is_pay_v24, is_pay_v28 all exist as
+   STRING; both is_pay value sets are Yes, No, and dash.
+9. RESOLVED (VERIFIED-IN-BQ): specialty bridge coverage — 733,186,951
+   total claim lines; 275,612,726 outside the 43-row bridge; unmatched
+   share 0.3759 (37.6 percent). Top unmatched codes are ancillary,
+   facility, and mid-level categories (WLAB, VVNP, VPTH, VVDM, P, VVPA,
+   VER, VVHC and similar), consistent with the bridge covering
+   CMS-recognized physician specialties only; the out-of-bridge share is
+   intentional mapping policy, not data loss (see Known traps 23).
+10. RESOLVED (VERIFIED-IN-BQ): ms_dc_ref_ccir carries 75,725 rows with
+    the expected chronic_label distribution (CHRONIC, NOT_CHRONIC,
+    NO_DETERMINATION observed).
+11. RESOLVED (VERIFIED-IN-BQ): hosp_list_cmi schema observed (Pin,
+    Hospital_Name, System_id, System, TIN, Region, MarketHead,
+    PlanMarket, Market, Sub_Market, Hospital_Type_DW, Par_Detail,
+    Address, City, ST, Zip, County, Upin, Beds, Cmi, transfer_adj_cmi,
+    Ip_Ccr, Ip_Type, Op_Ccr, Op_Type, BadDebtPercentage, Teaching,
+    Urban_Rural, LastUpdated). State scope: Florida only, confirming the
+    known regeneration need for OH, AZ, IL.
+12. RESOLVED (VERIFIED-IN-BQ): dc2 tables exist with row counts —
+    dc2_baselines 11,696; dc2_capacity_county 197,397;
+    dc2_capacity_predictions 197,397; dc2_capacity_provider 4,895,666;
+    dc2_capacity_provider_future 203,920; dc2_demand_base 335,761;
+    dc2_demand_chronic 469,364; dc2_demand_predictions 335,761;
+    dc2_weave 10,573. Per Resolved gap 1, these predate the claims
+    rebuild and are historical reference only.
+13. RESOLVED (VERIFIED-IN-BQ): `mbr_submarket` and `prvdr_submarket`
+    carry many values beyond the four footprint states (FL South, IL
+    Chicago, FL West, AZ Phoenix, OH Columbus, NJ North, NY Metro, TX
+    Houston, CA Bay Area and similar, plus null). Display context only;
+    never a footprint filter.

@@ -28,10 +28,15 @@ exist today:
   regardless of the display filter.
 - Enrollment-by-band table.
 - Dynamic top-N condition table with rank, movement markers (^k / vk / -),
-  and an Other aggregate row; Top 10 / Top 20 toggle.
+  and an Other aggregate row; Top 10 / Top 20 toggle. Per D09 this is a
+  true intermediate of the demand cascade: computed as members x sickness
+  rates, and the same condition counts flow into the specialty demand
+  numbers.
 - Side-by-side horizontal top-N bar charts (specialty demand left,
   condition members right), gray baseline + green growth segments, dashed
-  baseline marker on shrink, end-of-bar value labels; shared toggle.
+  baseline marker on shrink, end-of-bar value labels; shared toggle. The
+  condition chart shows the same true intermediate: members x sickness
+  rates, feeding the specialty demand shown beside it.
 - Specialty demand table with a display-only specialty multiselect (also
   filters the left chart and the provider table; never the math).
 - Provider table: provider, specialty, current visits, estimated max
@@ -55,11 +60,12 @@ Notebook numbers reference 00_MASTER_PLAN.md.
 |---|---|---|---|---|
 | County list | One fictional county | All footprint counties across FL, OH, AZ, IL; county dropdown becomes real and drives every table | 06 (enrollment), 21 (extract) | County display: name only or name + state |
 | Age bands | Three bands (65-74, 75-84, 85+) | Four bands: 60-64, 65-74, 75-84, 85+; one more override slider | 03 (member spine), 06 | None |
-| Condition list | 15 hardcoded conditions | Full condition list at HCC or CCIR level; top-N table absorbs the scale | 05 (flags), 07 (rates) | HCC vs CCIR level not decided; ties to D07 evidence |
-| Specialty list | 4 hardcoded specialties | Full specialty list from claims; top-N chart absorbs the scale | 04 (visits base), 08 (rates, PENDING) | Specialty axis: specialty_ctg_cd vs cms_specialty |
+| Condition list | 15 hardcoded conditions | Full condition list at HCC or CCIR level; top-N table absorbs the scale; a true intermediate of the demand cascade per D09 | 05 (flags), 07 (rates) | HCC vs CCIR level not decided |
+| Specialty list | 4 hardcoded specialties | Full specialty list from claims; top-N chart absorbs the scale | 04 (visits base), 08 (rates) | Specialty axis: specialty_ctg_cd vs cms_specialty |
 | Provider rows | 10 fictional providers | Real providers with intake shares and modeled ceilings; table likely paginated or top-N per county | 09 (profile), 17 (ceilings) | Display cap per county |
 | Expected-growth defaults | Hardcoded +3 / +2 / +3 / +6, same everywhere | Per-county, per-band defaults from the growth model | 10-12, exported by 21 | Slider step vs off-step defaults |
-| Sickness and visit rates | Hardcoded 15x3 and 15x4 matrices | Frozen rate tables per county x band x condition and condition/band x specialty | 07, 08 (PENDING D07) | Inside vs beside shape (D07) |
+| Sickness and visit rates | Hardcoded 15x3 and 15x4 matrices | Frozen sickness rates per county x band x condition and per-condition visit rates (condition x specialty, plus the base rate); both drive demand per D09 | 07, 08 (after 13-15) | None |
+| Scope section wording | Generic frozen-rates text | Scope text must state that demographic changes move condition counts, and condition counts move specialty demand; wording change lands when real data is wired in | 21 (with the real extracts) | None |
 | Extract loading | CONFIG block in the .py file | Dashboard loads coefficient files produced by notebook 21; CONFIG block deleted | 21 | File format: parquet or csv, PENDING |
 
 ## Extract contract
@@ -72,8 +78,8 @@ BigQuery access.
 |---|---|---|
 | enrollment_baseline | county x band | December-current member counts |
 | growth_defaults | county x band | expected-growth slider defaults from the growth model |
-| sickness_rates | county x band x condition | prevalence fractions |
-| visit_rates | PENDING (D07) | condition-or-band x specialty annual visit rates |
+| sickness_rates | county x band x condition | prevalence fractions; feeds both the demand math and the condition display (D09) |
+| visit_rates | condition x specialty (plus the base rate for members with no mapped conditions) | per-condition annual visit rates from the visit-splitting model (D09) |
 | provider_profile | provider x specialty | current visits, intake share, modeled monthly and yearly ceiling |
 | county_reference | county | fips, name, state for dropdowns and labels |
 

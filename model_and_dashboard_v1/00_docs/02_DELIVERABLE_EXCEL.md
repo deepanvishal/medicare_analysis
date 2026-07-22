@@ -39,10 +39,11 @@ Column blocks and intended columns:
 **ESTIMATE 2026 block**
 - enrollment_2026_expected: enrollment moved by the expected-growth model
   (notebook 11). PENDING until the growth model is built.
-- demand_visits_2026: enrollment times sickness rates times visit rates.
-  PENDING — blocked by the inside/beside decision (D07) and notebook 08.
-- demand columns split by condition group: PENDING — exists only if the
-  inside decision is taken.
+- demand_visits_2026: enrollment by band x sickness rates x per-condition
+  visit rates, summed over bands and conditions (D09). PENDING until
+  notebooks 07, 08 and 13-15 run.
+- demand columns split by condition group: the true intermediate of the
+  chain (D09). PENDING on the same notebooks.
 
 **CAPACITY block**
 - provider_count: providers serving the county x specialty (notebook 09).
@@ -88,12 +89,14 @@ f(enrollment history). Then sections:
   PENDING.
 - Known limitations, stated plainly.
 
-### Sheet "model_visitsplit" (conditional)
+### Sheet "model_visitsplit"
 
-Exists ONLY if the inside decision is taken (D07). Same structure as
-model_growth: formula line, inputs, kept/dropped variables from notebook
-13's EDA, validation (15), generalization (15), limitations. PENDING in
-full.
+Active per D09 (supersedes the earlier retirement). Top line, plain
+formula: a multi-condition member's visits are allocated across their
+conditions so per-condition visit rates do not double count. Same
+structure as model_growth: formula line, inputs, kept/dropped variables
+from notebook 13's EDA, validation (15), generalization (15),
+limitations. PENDING until notebooks 13-15 run.
 
 ### Sheet "model_capacity"
 
@@ -107,7 +110,9 @@ those run.
 The frozen rate tables shipped with the report, each with its as-of date:
 - enrollment (county x band, notebook 06)
 - sickness rates (county x band x condition, notebook 07)
-- visit rates (shape PENDING the inside/beside decision, notebook 08)
+- visit rates (condition x specialty plus the base rate for members with
+  no mapped conditions, notebook 08 after 13-15; the demand driver per
+  D09)
 - intake shares (provider x specialty, notebook 09)
 
 ### Sheet "assumptions"
