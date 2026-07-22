@@ -15,11 +15,17 @@ BAND_SHARES = [0.55, 0.33, 0.12]
 MASTER_DEFAULT = 3
 BAND_DEFAULTS = [2, 3, 6]
 
-CONDITIONS = ["Diabetes", "CHF", "CKD", "COPD", "Osteoarthritis"]
+CONDITIONS = ["Diabetes", "CHF", "CKD", "COPD", "Osteoarthritis",
+              "Hypertension", "Atrial Fibrillation", "Dementia", "Depression",
+              "Stroke History", "Cancer History", "Obesity", "Asthma",
+              "Chronic Pain", "Anemia"]
 PREVALENCE = [
-    [0.25, 0.08, 0.10, 0.10, 0.30],
-    [0.30, 0.14, 0.18, 0.14, 0.42],
-    [0.33, 0.22, 0.30, 0.18, 0.52],
+    [0.25, 0.08, 0.10, 0.10, 0.30, 0.45, 0.05, 0.02, 0.14,
+     0.04, 0.10, 0.28, 0.08, 0.18, 0.08],
+    [0.30, 0.14, 0.18, 0.14, 0.42, 0.58, 0.10, 0.08, 0.15,
+     0.08, 0.15, 0.24, 0.08, 0.22, 0.14],
+    [0.33, 0.22, 0.30, 0.18, 0.52, 0.65, 0.18, 0.18, 0.17,
+     0.14, 0.19, 0.18, 0.07, 0.26, 0.24],
 ]
 
 SPECIALTIES = ["Primary Care", "Cardiology", "Nephrology", "Orthopedics"]
@@ -29,6 +35,16 @@ VISIT_RATES = [
     [0.6, 0.3, 2.8, 0.0],
     [1.0, 0.3, 0.0, 0.0],
     [0.4, 0.0, 0.0, 1.8],
+    [0.8, 0.6, 0.1, 0.0],
+    [0.4, 1.8, 0.0, 0.0],
+    [1.0, 0.0, 0.0, 0.0],
+    [0.8, 0.0, 0.0, 0.0],
+    [0.5, 0.9, 0.0, 0.0],
+    [0.6, 0.0, 0.0, 0.0],
+    [0.5, 0.0, 0.0, 0.3],
+    [0.7, 0.0, 0.0, 0.0],
+    [0.6, 0.0, 0.0, 0.9],
+    [0.4, 0.0, 0.3, 0.0],
 ]
 BASE_PCP_RATE = 2.0
 
@@ -83,9 +99,18 @@ def condition_members(enrollment):
             for c in range(len(CONDITIONS))]
 
 
+def ranks_desc(values):
+    order = sorted(range(len(values)), key=lambda i: -values[i])
+    ranks = [0] * len(values)
+    for pos, i in enumerate(order):
+        ranks[i] = pos + 1
+    return order, ranks
+
+
 BASELINE_BANDS = band_enrollment([0, 0, 0])
 BASELINE_DEMAND = demand_by_specialty(BASELINE_BANDS)
 BASELINE_CONDITIONS = condition_members(BASELINE_BANDS)
+_, BASELINE_COND_RANKS = ranks_desc(BASELINE_CONDITIONS)
 
 
 def fmt(n):
@@ -251,6 +276,14 @@ app.layout = html.Div(
                                        "pct_change"]],
                              **TABLE_STYLE),
                          html.H4("Condition mix"),
+                         dcc.RadioItems(id="rad-topn",
+                                        options=[{"label": "Top 10", "value": 10},
+                                                 {"label": "Top 20", "value": 20}],
+                                        value=10, inline=True,
+                                        style={"fontSize": "13px",
+                                               "marginBottom": "6px"},
+                                        inputStyle={"marginRight": "4px"},
+                                        labelStyle={"marginRight": "16px"}),
                          html.Div("Members can have multiple conditions; column does "
                                   "not sum to enrollment.",
                                   style={"fontSize": "12px", "color": "#898781",
@@ -258,8 +291,9 @@ app.layout = html.Div(
                          dash_table.DataTable(
                              id="tbl-condition",
                              columns=[{"name": c, "id": c} for c in
-                                      ["condition", "baseline_members",
-                                       "scenario_members", "delta", "pct_change"]],
+                                      ["rank", "movement", "condition",
+                                       "baseline_members", "scenario_members",
+                                       "delta", "pct_change"]],
                              **TABLE_STYLE),
                          html.H4("Demand by specialty"),
                          html.Div(style={"maxWidth": "420px",
@@ -389,9 +423,10 @@ def build_demand_figure(selected, demand):
     Input("s-b2", "value"),
     Input("btn-reset", "n_clicks"),
     Input("dd-specialty", "value"),
+    Input("rad-topn", "value"),
     State("store-sync", "data"),
 )
-def update(master, b0, b1, b2, _reset_clicks, selected_specialties, sync_token):
+def update(master, b0, b1, b2, _reset_clicks, selected_specialties, top_n, sync_token):
     trigger = ctx.triggered_id
     master = master if master is not None else MASTER_DEFAULT
     bands = [b0 if b0 is not None else BAND_DEFAULTS[0],
@@ -432,15 +467,37 @@ def update(master, b0, b1, b2, _reset_clicks, selected_specialties, sync_token):
             "delta": f"{d:+,.0f}", "pct_change": pct(d / base)})
 
     cond_now = condition_members(enrollment)
+    n_show = top_n if top_n is not None else 10
+    order, cur_ranks = ranks_desc(cond_now)
     condition_rows = []
-    for c, cond in enumerate(CONDITIONS):
+    for pos, c in enumerate(order[:n_show]):
         d = cond_now[c] - BASELINE_CONDITIONS[c]
+        moved = BASELINE_COND_RANKS[c] - cur_ranks[c]
+        if moved > 0:
+            movement = f"^{moved}"
+        elif moved < 0:
+            movement = f"v{-moved}"
+        else:
+            movement = "-"
         condition_rows.append({
-            "condition": cond,
+            "rank": pos + 1,
+            "movement": movement,
+            "condition": CONDITIONS[c],
             "baseline_members": fmt(BASELINE_CONDITIONS[c]),
             "scenario_members": fmt(cond_now[c]),
             "delta": f"{d:+,.0f}",
             "pct_change": pct(d / BASELINE_CONDITIONS[c])})
+    rest = order[n_show:]
+    if rest:
+        rest_base = sum(BASELINE_CONDITIONS[c] for c in rest)
+        rest_now = sum(cond_now[c] for c in rest)
+        condition_rows.append({
+            "rank": "", "movement": "",
+            "condition": f"Other ({len(rest)} conditions)",
+            "baseline_members": fmt(rest_base),
+            "scenario_members": fmt(rest_now),
+            "delta": f"{rest_now - rest_base:+,.0f}",
+            "pct_change": ""})
 
     selected = selected_specialties or []
     demand_rows = []
