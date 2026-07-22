@@ -186,3 +186,18 @@ Alternatives considered: rejecting the model and fitting per-county
 rates; rejected - county-level fits would be data-starved exactly where
 calibration is weakest, and the national fit plus post-stratification
 keeps slider deltas condition-driven.
+
+## D14 — [date]
+
+Decision: Ship v0 capacity now; the modeled ceiling (16-18 full trio)
+follows later.
+Reason: The MVP deadline requires capacity now. v0 ceiling = observed
+data, not a model: per provider, annual ceiling = max observed monthly
+visits (2024-2025) x 12; monthly ceiling = that max month. Explicitly
+labeled v0 on every deliverable; replaced by the model in a later
+phase. Providers are routed within county x specialty by new-patient
+share (intake_weight in md1_capacity_v0).
+Alternatives considered: waiting for the modeled ceilings; rejected for
+the MVP timeline. Cross-provider percentile ceilings; rejected - a
+provider's own observed peak is more defensible than a percentile cut
+(consistent with D05's rejection of percentile cutoffs).

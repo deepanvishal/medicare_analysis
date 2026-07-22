@@ -65,11 +65,11 @@ Notebook numbers reference 00_MASTER_PLAN.md.
 | Age bands | Three bands (65-74, 75-84, 85+) | Four bands: 60-64, 65-74, 75-84, 85+; one more override slider | 03 (member spine), 06 | None |
 | Condition list | 15 hardcoded conditions | Full condition list at HCC or CCIR level; top-N table absorbs the scale; a true intermediate of the demand cascade per D09 | 05 (flags), 07 (rates) | HCC vs CCIR level not decided |
 | Specialty list | 4 hardcoded specialties | Full specialty list from claims; top-N chart absorbs the scale | 04 (visits base), 08 (rates) | Specialty axis: specialty_ctg_cd vs cms_specialty |
-| Provider rows | 10 fictional providers | Real providers with intake shares and modeled ceilings; table likely paginated or top-N per county | 09 (profile), 17 (ceilings) | Display cap per county |
+| Provider rows | 10 fictional providers | Real providers from providers.parquet (md1_capacity_v0, 16 v0 per D14): observed-peak ceilings labeled v0, intake_weight routing; modeled ceilings arrive with the 16-18 trio later; table likely paginated or top-N per county | 16 v0 (from 09 profile), 21 (extract) | Display cap per county |
 | Slider defaults and last-year labels | Hardcoded +3 / +2 / +3 / +6 "expected" default marks, same everywhere; Reset returns to them | Defaults are 0 for every county and band (D11); an info label per slider shows last year's change from md1_growth_defaults ("last year: +X%"); the expected-growth tick concept is replaced by this label; Reset returns to 0. Enrollment moves are made at AEP and take effect January 1, so last year's change is context, not a starting position | 11 (context table), exported by 21 | None |
 | Sickness and visit rates | Hardcoded 15x3 and 15x4 matrices | Frozen sickness rates per county x band x condition and per-condition visit rates (condition x specialty, plus the base rate); both drive demand per D09 | 07, 08 (after 13-15) | None |
 | Scope section wording | Generic frozen-rates text | Scope text must state that demographic changes move condition counts, and condition counts move specialty demand; wording change lands when real data is wired in | 21 (with the real extracts) | None |
-| Extract loading | CONFIG block in the .py file | Dashboard loads coefficient files produced by notebook 21; CONFIG block deleted | 21 | File format: parquet or csv, PENDING |
+| Extract loading | CONFIG block in the .py file | Dashboard loads the seven parquet extracts + manifest.json produced by notebook 21 from 07_dashboard/extracts/; CONFIG block deleted | 21 | None - format decided: parquet |
 
 ## Extract contract
 
@@ -82,15 +82,18 @@ slider deltas are shaped by the rate tables.
 
 | Extract | Grain | Content |
 |---|---|---|
-| enrollment_baseline | county x band | December-current member counts |
-| growth_defaults | county x band | context-label table, units percentage points: last year's Dec-to-Dec change shown beside each slider as "last year: +X%"; slider defaults are 0 per D11 and are never taken from this table |
-| sickness_rates | county x band x condition | prevalence fractions; feeds both the demand math and the condition display (D09) |
-| visit_rates | condition x specialty (plus the base rate for members with no mapped conditions) | per-condition annual visit rates from the visit-splitting model (D09), shipped as md1_visit_rates (08) |
-| county_calibration | county x specialty | md1_county_calibration (08): factor multiplied onto the demand chain per D13; baseline reproduces 2025 actuals, small cells shrunken toward the state factor, clamped 0.1..3.0 |
-| provider_profile | provider x specialty | current visits, intake share, modeled monthly and yearly ceiling |
-| county_reference | county | fips, name, state for dropdowns and labels |
+| enrollment.parquet | county x band | 2025-12 member counts with state_cd (md1_enrollment_history) |
+| growth_context.parquet | county x band (incl ALL_BANDS rows) | last_year_yoy_pct in percentage points for the "last year: +X%" label beside each slider; slider defaults are 0 per D11 and are never taken from this file |
+| sickness_rates.parquet | county x band x condition | 2025 tenure-ALL prevalence, non-null rows only, with description and chronic_label; feeds both the demand math and the condition display (D09) |
+| visit_rates.parquet | specialty x condition (BASE_RATE and OTHER_CONDITION rows included) | md1_visit_rates (08): the visits[condition, specialty] coefficients from the visit-splitting model |
+| county_calibration.parquet | county x specialty | md1_county_calibration shipped factor (08, D13): multiplied onto the demand chain; baseline reproduces 2025 actuals, small cells shrunken toward the state factor, clamped 0.1..3.0 |
+| providers.parquet | provider | md1_capacity_v0 all columns (16 v0, D14): observed-peak ceilings, intake_weight routing by new-patient share; capacity is v0, labeled as such |
+| conditions_meta.parquet | condition | distinct condition + description for display labels |
 
-Formats: parquet or csv, decided later; PENDING.
+Format: parquet, written by 21_dashboard_extracts.py to
+model_and_dashboard_v1/07_dashboard/extracts/ together with
+manifest.json (row counts, source tables, build timestamp, and the line
+"capacity=v0 observed-peak; demand=calibrated to 2025 actuals").
 
 ## Deployment note
 
