@@ -51,6 +51,9 @@ Differences from the target list to flag:
 - The mock carries 15 fictional conditions and 4 specialties, one
   fictional county, 10 fictional providers.
 - Everything sits in one CONFIG block; there is no file loading yet.
+- The mock still shows "expected" default marks (+3/+2/+3/+6) and Reset
+  returns to them; per D11 the real build starts every slider at 0 with
+  a "last year: +X%" info label instead, and Reset returns to 0.
 
 ## Mock-to-real gap list
 
@@ -63,7 +66,7 @@ Notebook numbers reference 00_MASTER_PLAN.md.
 | Condition list | 15 hardcoded conditions | Full condition list at HCC or CCIR level; top-N table absorbs the scale; a true intermediate of the demand cascade per D09 | 05 (flags), 07 (rates) | HCC vs CCIR level not decided |
 | Specialty list | 4 hardcoded specialties | Full specialty list from claims; top-N chart absorbs the scale | 04 (visits base), 08 (rates) | Specialty axis: specialty_ctg_cd vs cms_specialty |
 | Provider rows | 10 fictional providers | Real providers with intake shares and modeled ceilings; table likely paginated or top-N per county | 09 (profile), 17 (ceilings) | Display cap per county |
-| Expected-growth defaults | Hardcoded +3 / +2 / +3 / +6, same everywhere | Per-county, per-band defaults from the growth model | 10-12, exported by 21 | Slider step vs off-step defaults |
+| Slider defaults and last-year labels | Hardcoded +3 / +2 / +3 / +6 "expected" default marks, same everywhere; Reset returns to them | Defaults are 0 for every county and band (D11); an info label per slider shows last year's change from md1_growth_defaults ("last year: +X%"); the expected-growth tick concept is replaced by this label; Reset returns to 0. Enrollment moves are made at AEP and take effect January 1, so last year's change is context, not a starting position | 11 (context table), exported by 21 | None |
 | Sickness and visit rates | Hardcoded 15x3 and 15x4 matrices | Frozen sickness rates per county x band x condition and per-condition visit rates (condition x specialty, plus the base rate); both drive demand per D09 | 07, 08 (after 13-15) | None |
 | Scope section wording | Generic frozen-rates text | Scope text must state that demographic changes move condition counts, and condition counts move specialty demand; wording change lands when real data is wired in | 21 (with the real extracts) | None |
 | Extract loading | CONFIG block in the .py file | Dashboard loads coefficient files produced by notebook 21; CONFIG block deleted | 21 | File format: parquet or csv, PENDING |
@@ -77,7 +80,7 @@ BigQuery access.
 | Extract | Grain | Content |
 |---|---|---|
 | enrollment_baseline | county x band | December-current member counts |
-| growth_defaults | county x band | expected-growth slider defaults from the growth model |
+| growth_defaults | county x band | context-label table, units percentage points: last year's Dec-to-Dec change shown beside each slider as "last year: +X%"; slider defaults are 0 per D11 and are never taken from this table |
 | sickness_rates | county x band x condition | prevalence fractions; feeds both the demand math and the condition display (D09) |
 | visit_rates | condition x specialty (plus the base rate for members with no mapped conditions) | per-condition annual visit rates from the visit-splitting model (D09) |
 | provider_profile | provider x specialty | current visits, intake share, modeled monthly and yearly ceiling |

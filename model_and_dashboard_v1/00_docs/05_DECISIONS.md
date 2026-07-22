@@ -113,3 +113,20 @@ guarding the column.
 Reason: The earlier recording was a misreading during review; the
 re-verified schema is authoritative.
 Alternatives considered: None; a factual correction.
+
+## D11 — [date]
+
+Decision: Slider defaults are 0 for every county and band.
+md1_growth_defaults is repurposed as a context table: its yoy is shown
+next to each slider as "last year: +X%", never as the starting
+position.
+Reason: The executed notebook 12 backtest returned verdict REVIEW -
+shrunken-method overall MAE 18.46 points vs 12.12 for zero-growth, and
+the calibration is inverted (top predicted decile +29.29 predicted vs
+-6.59 actual). Enrollment growth is made at AEP (annual enrollment
+period): choices made October-December all take effect January 1, and
+AEP outcomes swing year to year with plan design and competition. With
+only three Decembers of history, last year's change points the wrong
+way. Zero-growth beats everything.
+Alternatives considered: Shipping the shrunken defaults; rejected
+because the backtest calibration is inverted.
