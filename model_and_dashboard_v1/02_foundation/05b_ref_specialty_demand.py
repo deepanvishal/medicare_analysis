@@ -66,18 +66,18 @@ OUT   = cfg.src("md1_ref_specialty_demand")
 #   CS   - the dedicated surgical code keeps the surgical specialty.
 #   WBHF - behavioral facility code; outpatient behavioral health is
 #          where the visits happen.
+#   VVMH - Mental Health Professional, a shared proxy for both mental
+#          health service lines; Clinical Psychology chosen as the
+#          broader clinical service line for the demand axis; Clinical
+#          Social Work drops.
 PRIMARY_PICK = {
     "WHOS": "Acute Inpatient Hospitals",
     "VVRH": "Physical Therapy",
     "C": "Cardiology",
     "CS": "Cardiothoracic Surgery",
     "WBHF": "Outpatient Behavioral Health",
+    "VVMH": "Clinical Psychology",
 }
-# Known at authoring time: VVMH multi-maps (Clinical Psychology |
-# Clinical Social Work, Step3_specialty_cd_based_report.sql lines
-# 491-492) and is deliberately NOT in the policy above - the pre-flight
-# gate below will fail listing it until a business pick is recorded
-# here. Never auto-picked.
 
 CODES_SQL = ", ".join(f"'{c}'" for c in sorted(PRIMARY_PICK))
 PICK_PRED = " OR ".join(

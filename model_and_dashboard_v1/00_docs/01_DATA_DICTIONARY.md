@@ -254,7 +254,8 @@ Built by model_and_dashboard_v1/02_foundation/05b_ref_specialty_demand.py
 from the 2.6 compliance crosswalk by applying the D12 primary-pick
 policy (WHOS -> Acute Inpatient Hospitals; VVRH -> Physical Therapy;
 C -> Cardiology; CS -> Cardiothoracic Surgery; WBHF -> Outpatient
-Behavioral Health). Grain: aetna_cd UNIQUE - exactly one CMS specialty
+Behavioral Health; VVMH -> Clinical Psychology - all six multi-mapped
+codes covered). Grain: aetna_cd UNIQUE - exactly one CMS specialty
 per code; the build fails loudly on any residual multi-map and never
 auto-picks. Status: VERIFIED-IN-CODE.
 

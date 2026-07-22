@@ -146,14 +146,16 @@ inflated reconstruction errors follow. Fix: a demand-only mapping with
 exactly one CMS specialty per aetna code.
 Primary-pick policy: WHOS -> Acute Inpatient Hospitals; VVRH ->
 Physical Therapy; C -> Cardiology; CS -> Cardiothoracic Surgery;
-WBHF -> Outpatient Behavioral Health. Any residual multi-map fails the
-05b build loudly, listing the offending codes and names; never
-auto-picked.
-Known residual at recording time: VVMH maps to Clinical Psychology AND
-Clinical Social Work (Step3 crosswalk source) and is NOT covered by the
-policy above; 05b fails on it by design - before the table can be
-created - until a deliberate VVMH pick is added to the policy. This is
-an open business decision, not an oversight.
+WBHF -> Outpatient Behavioral Health; VVMH -> Clinical Psychology.
+Any residual multi-map fails the 05b build loudly, listing the
+offending codes and names; never auto-picked.
+Residual closed: VVMH (Clinical Psychology AND Clinical Social Work in
+the crosswalk - the last uncovered fan-out, which failed the first 05b
+run by design) was picked as Clinical Psychology, the broader clinical
+service line for the demand axis; VVMH is Mental Health Professional, a
+shared proxy for both. Clinical Social Work drops from the demand axis;
+compliance reporting keeps it. The policy now covers all six
+multi-mapped codes in the 43-row crosswalk.
 Consequence: the CMS specialty names not picked by the policy leave the
 demand axis entirely (05b prints the dropped names at build time);
 compliance reporting keeps them via the untouched one-to-many
