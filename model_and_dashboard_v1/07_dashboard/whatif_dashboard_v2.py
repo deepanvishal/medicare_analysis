@@ -461,7 +461,8 @@ FLOW_STAGES = [
      "one provider, one day). A regression per specialty gives the base "
      "visits everyone makes plus a coefficient per condition — those "
      "coefficients are the visit rates. Example: 30 CKD members x 2.8 = "
-     "84 nephrology visits."),
+     "84 nephrology visits — the model's job ends at per-member visits; "
+     "everything after is addition and a sharing rule."),
     (5, "Local care pattern — anchor to this county's reality.",
      ACCENT_DATA,
      "The formula uses national patterns; counties have local habits. Per "
@@ -469,11 +470,17 @@ FLOW_STAGES = [
      "2025 number = the factor. Baseline matches reality exactly, and "
      "every slider change is resized to local behavior. Example: factor "
      "0.9 -> 84 becomes 76."),
-    (6, "On screen — demand, then providers.", NEUTRAL_BOX,
-     "The change lands on the charts, and the provider table splits it: "
-     "each provider takes their share of last year's new patients (intake "
-     "weight), checked against their ceiling — currently v0: busiest "
-     "observed month x 12."),
+    (6, "County demand per specialty — add everyone up.", NEUTRAL_BOX,
+     "Each member's predicted visits are summed to the county total per "
+     "specialty. No model here — just addition. This is the number on "
+     "the demand charts."),
+    (7, "Providers — who absorbs the change.", NEUTRAL_BOX,
+     "A sharing rule, not a model: each provider takes a share of the new "
+     "demand equal to their share of last year's new patients in that "
+     "county and specialty (intake weight). That load is checked against "
+     "their ceiling — currently v0: busiest observed month x 12. Modeling "
+     "who patients actually choose is a future improvement, listed in "
+     "assumptions."),
 ]
 
 
