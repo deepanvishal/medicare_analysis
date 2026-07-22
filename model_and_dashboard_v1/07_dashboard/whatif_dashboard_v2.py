@@ -396,6 +396,11 @@ def kpi_tile(tile_id, label, term=None):
                     ])
 
 
+def slider_marks(mn, mx):
+    return {i: (str(i) if i <= 0 else f"+{i}")
+            for i in range(mn, mx + 1, 10)}
+
+
 def slider_block(slider_id, readout_id, info_id, label, mn, mx, marks):
     return html.Div(style={"marginBottom": "16px"}, children=[
         html.Div(style={"display": "flex", "justifyContent": "space-between",
@@ -411,7 +416,7 @@ def slider_block(slider_id, readout_id, info_id, label, mn, mx, marks):
                                       "color": "#2a78d6",
                                       "cursor": "help"}),
                  ]),
-        dcc.Slider(id=slider_id, min=mn, max=mx, step=5, value=0,
+        dcc.Slider(id=slider_id, min=mn, max=mx, step=0.25, value=0,
                    marks=marks, tooltip={"placement": "bottom"}),
         html.Div(id=readout_id, style={"fontSize": "12px",
                                        "color": "#52514e"}),
@@ -581,11 +586,22 @@ def methodology_tab():
                "last year's new patients. Providers whose county and "
                "specialty saw no new patients last year carry no weight "
                "and receive no routed demand."),
-        html.H4("Capacity - PLACEHOLDER"),
-        html.P("Capacity is v0: a provider's ceiling is their own busiest "
-               "observed month (2024-2025) times 12. It is observed data, "
-               "not a model, and it is Aetna-relative. The modeled "
-               "ceiling (notebooks 16-18) replaces it in a later phase."),
+        html.H4("Capacity"),
+        html.P("Today (v0 placeholder): each provider's ceiling = their "
+               "busiest observed month x 12. Simple and honest — it's "
+               "what they've proven they can do — but one hot month can "
+               "overstate it, and a steadily growing provider gets "
+               "understated. No modeling involved."),
+        html.P("Coming (capacity model): a model predicts each provider's "
+               "realistic yearly and monthly ceiling from their own "
+               "pattern — volume trend, how fast they absorb new "
+               "patients, the age mix they treat, and how similar "
+               "providers behave near their limits. Validated by "
+               "backtest: predict last year's ceilings from the year "
+               "before, and check no provider actually exceeded them. "
+               "Unlike demand, capacity is not calibrated — there is no "
+               "observed 'true maximum' to calibrate against; validation "
+               "replaces calibration here."),
         html.H4("Status definitions"),
         html.P("Load = current visits + new demand. Under 90% of ceiling "
                "= HEADROOM; 90-100% = AT CAPACITY; over 100% = OVER "
@@ -736,29 +752,23 @@ def simulator_tab():
                                   slider_block(
                                       "s-master", "r-master", "i-master",
                                       "Master: total enrollment (%)",
-                                      -30, 50,
-                                      {-30: "-30", 0: "0", 25: "+25",
-                                       50: "+50"}),
+                                      -30, 50, slider_marks(-30, 50)),
                                   slider_block(
                                       "s-b0", "r-b0", "i-b0",
                                       "Band 60-64 (%)", -30, 100,
-                                      {-30: "-30", 0: "0", 50: "+50",
-                                       100: "+100"}),
+                                      slider_marks(-30, 100)),
                                   slider_block(
                                       "s-b1", "r-b1", "i-b1",
                                       "Band 65-74 (%)", -30, 100,
-                                      {-30: "-30", 0: "0", 50: "+50",
-                                       100: "+100"}),
+                                      slider_marks(-30, 100)),
                                   slider_block(
                                       "s-b2", "r-b2", "i-b2",
                                       "Band 75-84 (%)", -30, 100,
-                                      {-30: "-30", 0: "0", 50: "+50",
-                                       100: "+100"}),
+                                      slider_marks(-30, 100)),
                                   slider_block(
                                       "s-b3", "r-b3", "i-b3",
                                       "Band 85+ (%)", -30, 100,
-                                      {-30: "-30", 0: "0", 50: "+50",
-                                       100: "+100"}),
+                                      slider_marks(-30, 100)),
                                   html.Div("Moving the master sets every "
                                            "band to its value; band sliders "
                                            "then adjust one band at a time.",
@@ -1137,7 +1147,7 @@ def update(master, b0, b1, b2, b3, _reset_clicks, selected_specialties,
     readout_master = (
         f"Total: {fmt(total_enroll)} members "
         f"({pct((total_enroll - total_base) / total_base) if total_base else 'n/a'} vs baseline)")
-    readouts = [f"{BAND_NAMES[i]}: {bands[i]:+d}% -> {fmt(members[i])} "
+    readouts = [f"{BAND_NAMES[i]}: {bands[i]:+.2f}% -> {fmt(members[i])} "
                 f"members" for i in range(len(BANDS))]
 
     enroll_rows = []
