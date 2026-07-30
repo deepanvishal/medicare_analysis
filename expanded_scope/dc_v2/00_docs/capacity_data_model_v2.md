@@ -256,6 +256,7 @@ Grain: metric_cd × scope. Long format.
 9. Vintages carried in `period_start`; never mixed silently.
 10. All cap_/ref_ tables in modules 59-72 are created and read via cfg.table() (house prefix). A bare table name in any 59-72 script is a defect.
 11. CMS-only providers (no internal rows) carry NULL hours and no specialty_ctg_cd — acceptable because zero Aetna volume means zero willing capacity under Stage 9 rules; revisit only for total-market analyses (decision CD-21).
+12. County is NEVER a key alone — every join, group-by, and output grain that uses prvdr_county or mbr_county_cd must pair it with its state column. County names repeat across the four scope states (Crawford, Marion, etc.).
 
 ## Open items for confirmation
 
