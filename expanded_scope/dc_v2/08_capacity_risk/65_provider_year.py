@@ -2,14 +2,19 @@
 65 - provider-year consolidation + ceilings   [PYTHON runner / BigQuery DDL]
 
 WHAT  : Consolidates capped hours, FTE-days, team uplift (CD-23) and
-        ceilings into cap_provider_year. CD-22 individuals-only applied
-        here: NULL/'ZZZZ' specialty excluded, ind_src_cd = 'CMS_I' when the
-        npi is in the CMS ent_cd='I' set (module 61 filter), 'ASSUMED' for
-        unmatched-npi-with-real-specialty; exclusion counts printed.
-        Ceiling_low = cohort benchmark rate x own FTE-days x county share;
-        ceiling_high = x cohort median FTE-days (CD-04). Multi-county
-        allocation by service share, sums to 1.0 per provider (gate).
-GRAIN : npi/epdb_dw_prvdr_id x prvdr_county + prvdr_state_cd (rule 12)
+        ceilings into cap_provider_year. ALLOC-GRAIN RULING applied:
+        provider x county rows MERGE across both sources (one row per
+        provider x county, per the data model grain) and
+        county_alloc_share is computed over COMBINED internal + CMS
+        volumes, partition by provider only - a dual-source provider's
+        shares sum to 1 across the union of their counties. CD-22
+        individuals-only applied here: NULL/'ZZZZ' specialty excluded,
+        ind_src_cd = 'CMS_I' when the npi is in the CMS ent_cd='I' set,
+        'ASSUMED' for unmatched-npi-with-real-specialty; exclusion counts
+        printed. Ceiling_low = cohort benchmark rate x own FTE-days x
+        county share; ceiling_high = x cohort median FTE-days (CD-04).
+GRAIN : npi/epdb_dw_prvdr_id x prvdr_county + prvdr_state_cd (rule 12);
+        ONE row per provider x county across both sources
 INPUTS: cap_daily_capped, cap_hours_annual, cap_observed_detail,
         cap_params, ms_ref_county (county_type = CMS 5-way band)
 OUTPUT: cap_provider_year (BigQuery table) with gates + sanity prints.
@@ -17,11 +22,8 @@ Run   : python expanded_scope/dc_v2/08_capacity_risk/65_provider_year.py
 """
 
 # ASSUMPTION [1]: the provider-year is INTERNAL YEAR 2025 (latest complete
-#   year) + CMS 2023 rows for CMS-only providers. cap_provider_year's grain
-#   has no year column, so the two internal years cannot both live here;
-#   2024 remains available in cap_hours_annual. Falsified if run review
-#   wants 2024+2025 averaged or both kept (then a period_yr column and doc
-#   amendment are needed).
+#   year) + CMS 2023 hours merged in (CD-09 ratio-stability); 2024 remains
+#   available in cap_hours_annual. Confirmed by triage (base year = 2025).
 # ASSUMPTION [2]: county_band_cd = ms_ref_county.county_type (HSD 5-way,
 #   same values as the CMS SSA bands named in the spec); joined on
 #   UPPER(county_name) + state (rule 12). No separate SSA file exists in
@@ -31,15 +33,23 @@ Run   : python expanded_scope/dc_v2/08_capacity_risk/65_provider_year.py
 #   spirit and to match the state x specialty fallback).
 # ASSUMPTION [4]: benchmark quantile via APPROX_QUANTILES(_, 100)[OFFSET(
 #   CAST(BENCH_PCTL AS INT64))] - the only param-driven percentile BigQuery
-#   allows. Module 66 materializes the same numbers into cap_cohort_bench;
-#   formulas must stay in lockstep.
+#   allows. Module 66 materializes benchmarks from the published int-only
+#   columns - identical by construction (A6, alignment ruling).
 # ASSUMPTION [5]: internal org billers are undetectable (no ent_cd for
 #   epdb-only ids); CD-22 wording keeps real-specialty unmatched ids as
 #   ASSUMED individuals, so only CMS-side 'O' (already excluded in 61) and
 #   bad-specialty ids drop here.
-# ASSUMPTION [6]: CMS-only rows: capped_hrs_yr = defl_hrs_yr (no daily grain
-#   to cap); fte_days_yr = defl_hrs_yr / cohort median hrs_per_fte_day,
-#   fte_days_src_cd='ESTIMATED' per Stage 3.
+# ASSUMPTION [6]: ALLOC-GRAIN RULING implementation: provider x county rows
+#   merge via FULL OUTER JOIN on npi + county (NULL-safe); same county from
+#   two sources becomes one row with hours consolidated (internal capped +
+#   CMS estimated). The CMS component's FTE-days are estimated via the
+#   cohort median INTERNAL rate and top up the observed internal days;
+#   fte_days_src_cd = 'OBSERVED' when any internal days exist, else
+#   'ESTIMATED'. Cohort benchmarks use the INTERNAL-only rate
+#   (non-circular; CMS estimates never poison benchmarks). The int-only
+#   components are published as int_capped_hrs_yr / int_fte_days_yr and
+#   module 66 reads those - identical bench numbers by construction
+#   (65-66 alignment ruling).
 
 import os
 import sys
@@ -85,14 +95,23 @@ OPTIONS (labels=[("owner", "deepan_thulasi_aetna_com")])
 AS
 WITH internal_cty AS (
   SELECT
-    npi, epdb_dw_prvdr_id, prvdr_county, prvdr_state_cd,
-    SUM(capped_hrs)                    AS capped_hrs_yr,
-    SUM(frac_day)                      AS fte_days_cty,
+    npi, epdb_dw_prvdr_id,
+    COALESCE(npi, epdb_dw_prvdr_id)         AS pid,
+    prvdr_county, prvdr_state_cd,
+    SUM(capped_hrs)                         AS int_capped_hrs,
+    SUM(frac_day)                           AS int_fte_days,
     SUM(GREATEST(defl_hrs - capped_hrs, 0)) AS team_uplift_hrs,
-    SUM(impossible_day_flag)           AS impossible_day_cnt
+    SUM(impossible_day_flag)                AS impossible_day_cnt
   FROM `{CAPPED}`
   WHERE EXTRACT(YEAR FROM svc_dt) = {INTERNAL_YR}
-  GROUP BY 1, 2, 3, 4
+  GROUP BY 1, 2, 3, 4, 5
+),
+cms_cty AS (
+  SELECT npi, npi AS pid, prvdr_county, prvdr_state_cd,
+         specialty_ctg_cd AS cms_specialty_ctg_cd,
+         COALESCE(defl_hrs_yr, 0) AS cms_hrs
+  FROM `{ANNUAL}`
+  WHERE src = 'CMS_FFS'
 ),
 spec_pick AS (
   SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid,
@@ -102,61 +121,75 @@ spec_pick AS (
   WHERE src = 'AETNA_MA' AND period_yr = {INTERNAL_YR}
   GROUP BY 1
 ),
-alloc_base AS (
+vol_combined AS (
+  -- RULING: allocation over COMBINED volumes, both sources, per pid x county
   SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid, prvdr_county,
-         SUM(svc_cnt_yr) AS svc_cnt
+         SUM(COALESCE(svc_cnt_yr, 0)) AS svc_cnt
   FROM `{ANNUAL}`
-  WHERE src = 'AETNA_MA' AND period_yr = {INTERNAL_YR}
+  WHERE (src = 'AETNA_MA' AND period_yr = {INTERNAL_YR}) OR src = 'CMS_FFS'
   GROUP BY 1, 2
 ),
 alloc AS (
   SELECT pid, prvdr_county,
          SAFE_DIVIDE(svc_cnt, SUM(svc_cnt) OVER (PARTITION BY pid))
            AS county_alloc_share
-  FROM alloc_base
-),
-prov_tot AS (
-  SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid,
-         SUM(fte_days_cty) AS fte_days_tot, SUM(capped_hrs_yr) AS capped_tot
-  FROM internal_cty GROUP BY 1
+  FROM vol_combined
 ),
 cms_i_set AS (
   SELECT DISTINCT npi FROM `{OBS}` WHERE src = 'CMS_FFS'
 ),
-cms_only AS (
-  SELECT a.npi, a.prvdr_county, a.prvdr_state_cd, a.specialty_ctg_cd,
-         a.defl_hrs_yr AS capped_hrs_yr
-  FROM `{ANNUAL}` a
-  WHERE a.src = 'CMS_FFS'
-    AND COALESCE(a.npi, '') NOT IN (
-      SELECT COALESCE(npi, '') FROM internal_cty WHERE npi IS NOT NULL)
+merged AS (
+  -- RULING: ONE row per provider x county across BOTH sources; same county
+  -- from two sources merges with hours consolidated
+  SELECT
+    COALESCE(i.pid, c.pid)                       AS pid,
+    COALESCE(i.npi, c.npi)                       AS npi,
+    i.epdb_dw_prvdr_id,
+    COALESCE(i.prvdr_county, c.prvdr_county)     AS prvdr_county,
+    COALESCE(i.prvdr_state_cd, c.prvdr_state_cd) AS prvdr_state_cd,
+    COALESCE(i.int_capped_hrs, 0)                AS int_capped_hrs,
+    COALESCE(c.cms_hrs, 0)                       AS cms_hrs,
+    i.int_fte_days,
+    COALESCE(i.team_uplift_hrs, 0)               AS team_uplift_hrs,
+    i.impossible_day_cnt,
+    c.cms_specialty_ctg_cd,
+    i.pid IS NOT NULL                            AS has_int,
+    c.pid IS NOT NULL                            AS has_cms
+  FROM internal_cty i
+  FULL OUTER JOIN cms_cty c
+    ON i.npi = c.npi
+    AND COALESCE(i.prvdr_county, '(NULL)') = COALESCE(c.prvdr_county, '(NULL)')
+),
+prov_flags AS (
+  SELECT pid,
+         SUM(int_fte_days)   AS fte_days_int_tot,
+         SUM(cms_hrs)        AS cms_hrs_tot,
+         LOGICAL_OR(has_int) AS any_int,
+         LOGICAL_OR(has_cms) AS any_cms
+  FROM merged GROUP BY pid
 ),
 base AS (
   SELECT
-    i.npi, i.epdb_dw_prvdr_id, i.prvdr_county, i.prvdr_state_cd,
-    sp.specialty_ctg_cd,
-    i.capped_hrs_yr, i.fte_days_cty, pt.fte_days_tot,
-    i.team_uplift_hrs, i.impossible_day_cnt,
-    'OBSERVED' AS fte_days_src_cd,
-    IF(ci.npi IS NOT NULL, 'BOTH', 'AETNA_ONLY') AS src_mix_cd,
+    m.npi, m.epdb_dw_prvdr_id, m.pid, m.prvdr_county, m.prvdr_state_cd,
+    COALESCE(sp.specialty_ctg_cd, m.cms_specialty_ctg_cd) AS specialty_ctg_cd,
+    m.int_capped_hrs + m.cms_hrs                 AS capped_hrs_yr,
+    m.int_capped_hrs, m.cms_hrs, m.int_fte_days,
+    pf.fte_days_int_tot, pf.cms_hrs_tot,
+    m.team_uplift_hrs, m.impossible_day_cnt,
+    CASE WHEN pf.any_int AND pf.any_cms THEN 'BOTH'
+         WHEN pf.any_int THEN 'AETNA_ONLY'
+         ELSE 'CMS_ONLY' END                     AS src_mix_cd,
+    IF(m.int_fte_days IS NOT NULL, 'OBSERVED', 'ESTIMATED') AS fte_days_src_cd,
     IF(ci.npi IS NOT NULL, 'CMS_I', 'ASSUMED')   AS ind_src_cd,
     CASE WHEN al.pid IS NOT NULL THEN al.county_alloc_share
          ELSE 1.0 END                            AS county_alloc_share
-  FROM internal_cty i
-  JOIN prov_tot pt ON COALESCE(i.npi, i.epdb_dw_prvdr_id) = pt.pid
-  LEFT JOIN spec_pick sp ON COALESCE(i.npi, i.epdb_dw_prvdr_id) = sp.pid
+  FROM merged m
+  JOIN prov_flags pf ON m.pid = pf.pid
+  LEFT JOIN spec_pick sp ON m.pid = sp.pid
   LEFT JOIN alloc al
-    ON COALESCE(i.npi, i.epdb_dw_prvdr_id) = al.pid
-    AND COALESCE(i.prvdr_county, '(NULL)') = COALESCE(al.prvdr_county, '(NULL)')
-  LEFT JOIN cms_i_set ci ON i.npi = ci.npi
-  UNION ALL
-  SELECT
-    c.npi, CAST(NULL AS STRING), c.prvdr_county, c.prvdr_state_cd,
-    c.specialty_ctg_cd,
-    c.capped_hrs_yr, CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64),
-    0.0, CAST(NULL AS INT64),
-    'ESTIMATED', 'CMS_ONLY', 'CMS_I', 1.0
-  FROM cms_only c
+    ON m.pid = al.pid
+    AND COALESCE(m.prvdr_county, '(NULL)') = COALESCE(al.prvdr_county, '(NULL)')
+  LEFT JOIN cms_i_set ci ON m.npi = ci.npi
 ),
 kept AS (
   SELECT b.*, rc.county_type AS county_band_cd
@@ -168,49 +201,55 @@ kept AS (
     AND UPPER(TRIM(b.specialty_ctg_cd)) != 'ZZZZ'
 ),
 rates AS (
-  SELECT *, SAFE_DIVIDE(capped_hrs_yr, fte_days_cty) AS hrs_per_fte_day
+  -- benchmark basis = INTERNAL observed rate only (A6): CMS estimated
+  -- hours never poison the benchmarks
+  SELECT *, SAFE_DIVIDE(int_capped_hrs, int_fte_days) AS int_rate
   FROM kept
 ),
 cohort AS (
   SELECT specialty_ctg_cd, county_band_cd, prvdr_state_cd,
-         APPROX_QUANTILES(hrs_per_fte_day, 100)[OFFSET({PCTL})] AS bench_rate,
-         APPROX_QUANTILES(fte_days_tot, 2)[OFFSET(1)]           AS median_fte_days,
-         APPROX_QUANTILES(hrs_per_fte_day, 2)[OFFSET(1)]        AS median_rate
+         APPROX_QUANTILES(int_rate, 100)[OFFSET({PCTL})] AS bench_rate,
+         APPROX_QUANTILES(fte_days_int_tot, 2)[OFFSET(1)] AS median_fte_days,
+         APPROX_QUANTILES(int_rate, 2)[OFFSET(1)]         AS median_rate
   FROM rates
-  WHERE fte_days_src_cd = 'OBSERVED' AND hrs_per_fte_day IS NOT NULL
+  WHERE fte_days_src_cd = 'OBSERVED' AND int_rate IS NOT NULL
   GROUP BY 1, 2, 3
+),
+enriched AS (
+  SELECT r.*, c.bench_rate, c.median_fte_days, c.median_rate,
+    CASE WHEN r.fte_days_int_tot IS NOT NULL
+         THEN r.fte_days_int_tot + COALESCE(SAFE_DIVIDE(r.cms_hrs_tot, c.median_rate), 0)
+         ELSE SAFE_DIVIDE(r.cms_hrs_tot, c.median_rate) END AS fte_days_tot_eff,
+    CASE WHEN r.int_fte_days IS NOT NULL
+         THEN r.int_fte_days + COALESCE(SAFE_DIVIDE(r.cms_hrs, c.median_rate), 0)
+         ELSE SAFE_DIVIDE(r.cms_hrs, c.median_rate) END     AS fte_days_yr
+  FROM rates r
+  LEFT JOIN cohort c
+    ON r.specialty_ctg_cd = c.specialty_ctg_cd
+    AND COALESCE(r.county_band_cd, '') = COALESCE(c.county_band_cd, '')
+    AND r.prvdr_state_cd = c.prvdr_state_cd
 )
 SELECT
-  r.npi, r.epdb_dw_prvdr_id, r.prvdr_county, r.prvdr_state_cd,
-  r.specialty_ctg_cd, r.county_band_cd,
-  r.capped_hrs_yr,
-  COALESCE(r.fte_days_cty, SAFE_DIVIDE(r.capped_hrs_yr, c.median_rate)) AS fte_days_yr,
-  r.fte_days_src_cd,
-  SAFE_DIVIDE(r.capped_hrs_yr,
-    COALESCE(r.fte_days_cty, SAFE_DIVIDE(r.capped_hrs_yr, c.median_rate)))
-                                                             AS hrs_per_fte_day,
-  c.bench_rate * COALESCE(r.fte_days_tot,
-    SAFE_DIVIDE(r.capped_hrs_yr, c.median_rate)) * r.county_alloc_share
-                                                             AS ceiling_low_hrs,
-  c.bench_rate * c.median_fte_days * r.county_alloc_share    AS ceiling_high_hrs,
-  r.county_alloc_share,
-  GREATEST(
-    c.bench_rate * COALESCE(r.fte_days_tot,
-      SAFE_DIVIDE(r.capped_hrs_yr, c.median_rate)) * r.county_alloc_share
-    - r.capped_hrs_yr, 0)                                    AS spare_hrs,
-  r.team_uplift_hrs,
-  SAFE_DIVIDE(r.capped_hrs_yr,
-    c.bench_rate * COALESCE(r.fte_days_tot,
-      SAFE_DIVIDE(r.capped_hrs_yr, c.median_rate)) * r.county_alloc_share)
-                                                             AS util_ratio,
-  r.impossible_day_cnt,
-  r.src_mix_cd,
-  r.ind_src_cd
-FROM rates r
-LEFT JOIN cohort c
-  ON r.specialty_ctg_cd = c.specialty_ctg_cd
-  AND COALESCE(r.county_band_cd, '') = COALESCE(c.county_band_cd, '')
-  AND r.prvdr_state_cd = c.prvdr_state_cd
+  npi, epdb_dw_prvdr_id, prvdr_county, prvdr_state_cd,
+  specialty_ctg_cd, county_band_cd,
+  capped_hrs_yr,
+  int_capped_hrs                                        AS int_capped_hrs_yr,
+  fte_days_yr,
+  int_fte_days                                          AS int_fte_days_yr,
+  fte_days_src_cd,
+  SAFE_DIVIDE(capped_hrs_yr, fte_days_yr)               AS hrs_per_fte_day,
+  bench_rate * fte_days_tot_eff * county_alloc_share    AS ceiling_low_hrs,
+  bench_rate * median_fte_days * county_alloc_share     AS ceiling_high_hrs,
+  county_alloc_share,
+  GREATEST(bench_rate * fte_days_tot_eff * county_alloc_share
+           - capped_hrs_yr, 0)                          AS spare_hrs,
+  team_uplift_hrs,
+  SAFE_DIVIDE(capped_hrs_yr,
+    bench_rate * fte_days_tot_eff * county_alloc_share) AS util_ratio,
+  impossible_day_cnt,
+  src_mix_cd,
+  ind_src_cd
+FROM enriched
 """
 
 GATE_ALLOC = f"""
@@ -225,7 +264,7 @@ WITH vol AS (
   SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid,
          SUM(COALESCE(svc_cnt_yr, 0)) AS svc_total
   FROM `{ANNUAL}`
-  WHERE src = 'AETNA_MA' AND period_yr = {INTERNAL_YR}
+  WHERE (src = 'AETNA_MA' AND period_yr = {INTERNAL_YR}) OR src = 'CMS_FFS'
   GROUP BY 1
 ),
 sums AS (
@@ -309,6 +348,7 @@ def main():
         r = dict(row)
         buckets[r["bucket"]] = r["n"]
         print("  ", r)
+
     print("--- ceiling_low_hrs in '(NULL)' county bucket "
           "(unplaceable by the fill - conservative loss, watch the size) ---")
     for row in _run(client, "null-county ceiling share", DIAG_NULL_CTY_CEILING):
@@ -346,19 +386,23 @@ if __name__ == "__main__":
 
 # REVIEW
 # Reviewer 1 LOGIC:
+#  - ALLOC-GRAIN RULING: shares come from COMBINED internal + CMS volumes,
+#    partition by pid only - a dual-source provider's shares sum to 1
+#    across the union of their counties; the old per-src NOT IN pattern is
+#    gone (FULL OUTER merge on npi + NULL-safe county replaces it).
 #  - prvdr_county always paired with prvdr_state_cd (rule 12) including the
 #    ref_county band join; both provider keys carried; provider identity =
-#    COALESCE(npi, epdb) consistently.
+#    COALESCE(npi, epdb) consistently. Internal NULL-npi providers cannot
+#    merge with CMS rows (no shared key) - they stay single-source rows.
 #  - CD-23: team_uplift_hrs = sum of (defl - capped) positive slack, kept
-#    out of hrs_per_fte_day and therefore out of every benchmark input.
+#    out of the benchmark basis (internal rate only, A6).
 # Reviewer 2 SPEC:
-#  - Deviations = six ASSUMPTION blocks; biggest are the 2025-only internal
-#    year (A1) and the inline cohort benchmark that module 66 must
-#    reproduce exactly (A4).
-#  - CD-22 ind_src_cd/'exclusions implemented as specified; counts printed.
-#  - BENCH_PCTL, and the median rates ride cap_params / data; no tuning
-#    literal in this script.
+#  - Deviations = six ASSUMPTION blocks; A6 carries the ruling
+#    implementation. int_capped_hrs_yr / int_fte_days_yr published so
+#    module 66's benchmarks match this module's inline cohort by
+#    construction (alignment ruling); data model amendment pending.
+#  - CD-22 ind_src_cd / exclusions implemented as specified; counts printed.
 # Reviewer 3 EFFICIENCY:
-#  - Zero claims scans; reads module 62/64 outputs. All joins provider- or
-#    cohort-keyed; window function for alloc shares avoids a self-join.
-#    Relative cost: small.
+#  - Zero claims scans; reads module 62/64 outputs. FULL OUTER merge is
+#    keyed npi + county (no fan-out); window function for alloc shares;
+#    prov_flags is a provider-level aggregate. Relative cost: small.

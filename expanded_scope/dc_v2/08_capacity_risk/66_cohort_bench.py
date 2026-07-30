@@ -2,8 +2,10 @@
 66 - cohort benchmarks + intake rates   [PYTHON runner / BigQuery DDL]
 
 WHAT  : Materializes cap_cohort_bench. 'ALL' rows carry the ceiling
-        benchmarks (BENCH_PCTL of hrs_per_fte_day, median FTE-days) from
-        cap_provider_year - CAPPED rates only, uplift never enters cohort
+        benchmarks from cap_provider_year's INT-ONLY columns (BENCH_PCTL
+        of int_capped_hrs_yr / int_fte_days_yr, row-level per provider x
+        county) - identical to module 65's inline cohort by construction
+        (alignment ruling). CAPPED rates only, uplift never enters cohort
         math (CD-23). Segment rows carry cohort_intake_rate (new patients
         per active month, 12-mo pair lookback) and avg_first_yr_hrs (hours
         a new patient consumes in year 1) per ref_segment cell. Small
@@ -182,15 +184,28 @@ first_yr AS (
   LEFT JOIN defl d ON COALESCE(m.code_class_cd, 'OTHER') = d.code_class_cd
   GROUP BY 1, 2, 3, 4
 ),
+bench_rows AS (
+  -- 65-66 alignment ruling: benchmark basis = the INT-ONLY columns of
+  -- cap_provider_year, row-level per provider x county - the exact row
+  -- set, rate and filters of module 65's inline cohort CTE, so the bench
+  -- numbers are identical by construction. No provider dedup here.
+  SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid,
+         specialty_ctg_cd, county_band_cd, prvdr_state_cd,
+         SAFE_DIVIDE(int_capped_hrs_yr, int_fte_days_yr) AS int_rate,
+         SUM(int_fte_days_yr) OVER (PARTITION BY COALESCE(npi, epdb_dw_prvdr_id))
+           AS fte_days_int_tot,
+         fte_days_src_cd
+  FROM `{PY}`
+),
 bench_all AS (
   SELECT specialty_ctg_cd, county_band_cd, prvdr_state_cd, 'ALL' AS segment_cd,
-         APPROX_QUANTILES(hrs_per_fte_day, 100)[OFFSET({PCTL})] AS bench_rate_hrs_day,
-         APPROX_QUANTILES(fte_days_yr, 2)[OFFSET(1)]            AS median_fte_days,
+         APPROX_QUANTILES(int_rate, 100)[OFFSET({PCTL})]  AS bench_rate_hrs_day,
+         APPROX_QUANTILES(fte_days_int_tot, 2)[OFFSET(1)] AS median_fte_days,
          CAST(NULL AS FLOAT64) AS cohort_intake_rate,
          CAST(NULL AS FLOAT64) AS avg_first_yr_hrs,
-         COUNT(*) AS n_npi
-  FROM prov_dim
-  WHERE fte_days_src_cd = 'OBSERVED' AND hrs_per_fte_day IS NOT NULL
+         COUNT(DISTINCT pid) AS n_npi
+  FROM bench_rows
+  WHERE fte_days_src_cd = 'OBSERVED' AND int_rate IS NOT NULL
   GROUP BY 1, 2, 3
 ),
 bench_seg AS (
@@ -292,6 +307,9 @@ if __name__ == "__main__":
 #    definition, ratio-of-sums, first-yr window, NULL boot widths, segment
 #    operationalization).
 #  - BENCH_PCTL / MIN_COHORT_N / DEFLATION all read from cap_params.
+#  - Alignment ruling: bench_rows mirrors 65's cohort CTE exactly (int-only
+#    rate, provider x county row set, OBSERVED + non-NULL-rate filters,
+#    same quantile expressions on the same inputs).
 # Reviewer 3 EFFICIENCY:
 #  - Exactly ONE claims scan (claims_f CTE; all segment logic downstream of
 #    it). first_yr joins segmented to first_visits on member+provider with a
