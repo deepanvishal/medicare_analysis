@@ -2,7 +2,8 @@
 whatif_dashboard_v2.py - v2: tabs, filters, methodology   [Plotly Dash]
 
 v2 of the wired MVP dashboard (whatif_dashboard.py stays untouched).
-Port 8051, proxy env var DASH_PROXY_PREFIX_V2, same proxy pattern.
+Port 8051; proxy prefix from DASH_PROXY_PREFIX, default "/proxy/8051/"
+(always applied - no env dependence).
 Loads the EIGHT parquet extracts + manifest.json from ./extracts/ once
 at startup; no file reads after startup. Tabs: (1) Simulator - state ->
 county cascade with county names, OTHER_CONDITION term closed into the
@@ -353,11 +354,9 @@ TABLE_STYLE = {
     "style_header": {"fontWeight": "600"},
 }
 
-PROXY_PREFIX = os.environ.get("DASH_PROXY_PREFIX_V2")
-if PROXY_PREFIX:
-    app = Dash(__name__, requests_pathname_prefix=PROXY_PREFIX)
-else:
-    app = Dash(__name__)
+PROXY_PREFIX = os.environ.get("DASH_PROXY_PREFIX") or "/proxy/8051/"
+print(f"[startup] proxy prefix = {PROXY_PREFIX}", flush=True)
+app = Dash(__name__, requests_pathname_prefix=PROXY_PREFIX)
 
 SCOPE_TEXT = [
     "Demographic changes move condition counts, and condition counts move "
