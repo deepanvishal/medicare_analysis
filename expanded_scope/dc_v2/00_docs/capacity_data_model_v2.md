@@ -57,7 +57,7 @@ Grain: param_nm × param_scope.
 
 | Column | Type | Notes |
 |---|---|---|
-| param_nm | STRING | 'DEFLATION','DAILY_CAP_HRS','BENCH_PCTL','MIN_COHORT_N','FTE_DAY_HRS','CRED_K','HORIZON_FACTOR' |
+| param_nm | STRING | 'DEFLATION','DAILY_CAP_HRS','BENCH_PCTL','MIN_COHORT_N','FTE_DAY_HRS','CRED_K','HORIZON_FACTOR','SHARE_STABILITY_TOL' |
 | param_scope | STRING | code_class / specialty group / 'GLOBAL' |
 | param_val | FLOAT64 | |
 | derivation_nt | STRING | Method note |
@@ -121,7 +121,7 @@ Grain: npi × prvdr_county × svc_dt.
 | high_day_flag | INT64 | defl > cap (team-billing signal) |
 
 ## 8. `cap_provider_year` — Stage 4 (module 65) (modified)
-Grain: npi × prvdr_county.
+Grain: npi × prvdr_county. Capacity base year = 2025; 2024 retained in cap_hours_annual for intake windows and stability checks.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -136,9 +136,11 @@ Grain: npi × prvdr_county.
 | ceiling_high_hrs | FLOAT64 | bench_rate × cohort median days × county_alloc_share |
 | county_alloc_share | FLOAT64 | Σ per npi = 1.0 (checked) |
 | spare_hrs | FLOAT64 | ceiling_low − observed capped hrs, floor 0 |
+| team_uplift_hrs | FLOAT64 | CD-23: Σ hours trimmed by the daily cap; absorbing capacity for the fill = spare_hrs + team_uplift_hrs; never enters cohort benchmarks; no growth applied |
 | util_ratio | FLOAT64 | observed ÷ ceiling_low |
 | impossible_day_cnt | INT64 | NULL for CMS-only |
 | src_mix_cd | STRING | 'AETNA_ONLY'/'CMS_ONLY'/'BOTH' |
+| ind_src_cd | STRING | CD-22: 'CMS_I' (ent_cd = 'I' confirmed) / 'ASSUMED' (unmatched npi, real specialty) |
 
 ## 9. `cap_cohort_bench` — Stage 5 (module 66 cohort side, module 67 provider side) (modified: intake rates added)
 Grain: specialty_ctg_cd × county_band_cd × segment_cd (segment_cd = 'ALL' row for ceiling benchmarks).
@@ -174,11 +176,11 @@ Grain: npi × prvdr_county × segment_cd.
 | cell_cap_scaled_cnt | FLOAT64 | After proportional scale-down to total constraint (spare_hrs ÷ avg_first_yr_hrs) |
 
 ## 11. `dem_segment_split` — NEW (Stage 7 (module 68)). Demand side.
-Grain: mbr_county_cd × cms_specialty × segment_cd. **Demand grain = member county** (attribution rule).
+Grain: mbr_county_cd × specialty_ctg_cd × segment_cd. **Demand grain = member county** (attribution rule).
 
 | Column | Type | Notes |
 |---|---|---|
-| mbr_county_cd, cms_specialty, segment_cd | | PK |
+| mbr_county_cd, specialty_ctg_cd, segment_cd | | PK |
 | mbr_state_cd | STRING | Derived from mbr_submarket per the locked fact; rule 12 — county never stands alone |
 | anchor_demand | FLOAT64 | From dc_v2 forecast (county × specialty total) |
 | segment_share | FLOAT64 | Observed; Σ per county×specialty = 1.0 (V5) |
@@ -186,7 +188,7 @@ Grain: mbr_county_cd × cms_specialty × segment_cd. **Demand grain = member cou
 | growth_demand | FLOAT64 | Projected/scenario growth in segment (new patients to place) |
 | growth_src_cd | STRING | 'FORECAST' / 'SCENARIO' (dashboard slider) |
 
-Specialty bridge (`ref_specialty_crosswalk`) applied exactly once, at the fill join — same rule as notebook 55.
+Specialty bridge (`ref_specialty_crosswalk`) applied exactly once, at the fill join — same rule as notebook 55. Ruling (M63-72 triage): this table stays at specialty_ctg_cd — the forecast anchor's grain; cap_fill_result and cap_county_risk carry the bridged cms_specialty from the fill join onward.
 
 ## 12. `cap_fill_result` — NEW (Stage 8 (module 69))
 Grain: npi × prvdr_county × segment_cd (provider rows) + county remainder rows.
@@ -196,9 +198,13 @@ Grain: npi × prvdr_county × segment_cd (provider rows) + county remainder rows
 | mbr_county_cd | STRING | PK part — demand origin |
 | mbr_state_cd | STRING | Demand side; rule 12 — county never stands alone |
 | cms_specialty, segment_cd | STRING | PK part |
+| specialty_ctg_cd | STRING | Pre-bridge code kept for traceability (bridge applied here, rule 6) |
 | npi | STRING | PK part; NULL on remainder rows |
+| epdb_dw_prvdr_id | STRING | Both provider keys carried (locked fact); NULL on facility/remainder rows |
 | prvdr_county | STRING | NULL on remainder rows |
 | prvdr_state_cd | STRING | Provider side; NULL on remainder rows; rule 12 — county never stands alone |
+| absorbed_by | STRING | 'FACILITY' on CD-24 pass-through rows; NULL on individual-provider rows |
+| signal_src_cd | STRING | Carried from cap_provider_segment for the borrowed-signal rollup (module 71) |
 | seg_market_share | FLOAT64 | Re-normalized over open doors |
 | pass1_alloc_cnt | FLOAT64 | |
 | returned_cnt | FLOAT64 | Above caps |
@@ -219,7 +225,7 @@ Grain: npi × prvdr_county.
 | aetna_share | FLOAT64 | SAFE_DIVIDE(a, a+c), [0,1] |
 | share_stability_flag | INT64 | Quarterly swing beyond tolerance |
 | zero_utilization_flag | INT64 | Forces willing to 0 |
-| willing_spare_hrs | FLOAT64 | spare_hrs × aetna_share (0 if flagged) |
+| willing_spare_hrs | FLOAT64 | (spare_hrs + team_uplift_hrs) × aetna_share (0 if flagged) — CD-23 absorbing capacity; the earlier spare-only formula was stale |
 | willing_placed_cnt | FLOAT64 | Σ placed × aetna_share |
 
 ## 14. `cap_county_risk` — NEW (Stage 10 (module 71)). Final deliverable.
@@ -231,6 +237,7 @@ Grain: mbr_county_cd × cms_specialty × segment_cd.
 | mbr_state_cd | STRING | Derived from mbr_submarket per the locked fact; rule 12 — county never stands alone |
 | growth_demand | FLOAT64 | |
 | placed_cnt | FLOAT64 | |
+| facility_absorbed_cnt | FLOAT64 | CD-24 pass-through: growth absorbed by CD-22-excluded facility/org IDs (absorbed_by='FACILITY'), outside the two-pass fill |
 | unplaced_cnt | FLOAT64 | The risk number |
 | unplaced_pct | FLOAT64 | unplaced ÷ growth_demand |
 | n_open_providers | INT64 | |

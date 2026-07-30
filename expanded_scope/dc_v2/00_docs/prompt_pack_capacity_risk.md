@@ -376,3 +376,86 @@ cap_observed_detail), include it in the table write and grain comment.
 
 Change nothing else. Append to pack under "## Prompt M62b — state
 everywhere".
+
+## Prompt M63-72 drafts
+
+Yes — add ind_src_cd ('CMS_I'/'ASSUMED') to cap_provider_year in the data
+model. And here is the drafts prompt you were missing:
+
+You cannot run anything. No BigQuery execution. Deepan runs everything.
+Standing rules R1-R3 apply. Rule 12 (county never without state), CD-22,
+CD-23, CD-24 apply as already logged in the docs.
+
+Task: write ALL remaining pipeline scripts as DRAFTS, one file each, in
+expanded_scope/dc_v2/08_capacity_risk/:
+
+63_calibrate.py        -> cap_params
+64_ceiling.py          -> cap_daily_capped
+65_provider_year.py    -> cap_provider_year
+66_cohort_bench.py     -> cap_cohort_bench
+67_provider_segment.py -> cap_provider_segment
+68_dem_segment_split.py-> dem_segment_split
+69_fill.py             -> cap_fill_result
+70_willing.py          -> cap_willing
+71_county_risk.py      -> cap_county_risk
+72_validate.py         -> cap_validation
+
+Source of truth: capacity_methodology_v2.md (stages, formulas, gates) and
+capacity_data_model_v2.md (every table, column, key, note). Implement
+exactly what the specs say. Where a spec point references live dc_v2
+inputs (48's panel features for 67, 50's forecast anchor for 68, the
+DD-01 new/returning rule, the contract flag source for 70), READ the
+actual repo code first and use real table and column names.
+
+DRAFT DISCIPLINE (replaces stop-and-ask for this batch only): when a fact
+cannot be verified from repo files or the specs, do NOT guess silently and
+do NOT stop — write a clearly marked block at the top of that script:
+# ASSUMPTION [n]: <what was assumed, why, and what would falsify it>
+and keep going. Values that belong to cap_params are READ from cap_params,
+never hard-coded (module 63 is the only writer of cap_params).
+
+Every script: house docstring, config pattern, RUN_MODE where anything
+claims-derived is scanned, sanity prints per its spec section, REVIEW
+block with the three adversarial reviews (R3).
+
+Final output: the ten .py files, plus a single summary listing every
+ASSUMPTION block across all scripts, grouped by script. Append this
+prompt to the pack under "## Prompt M63-72 drafts".
+
+## Prompt M63-72 triage
+
+Assumption triage results — apply these, then Deepan runs.
+
+FIX 1 (code, 70_willing.py) — 70-A1 is wrong per CD-23: willing capacity
+must use ABSORBING capacity, not bare spare. willing_spare_hrs =
+(spare_hrs + team_uplift_hrs) x aetna_share. Update the data model formula
+note too (the doc was stale, CD-23 governs).
+
+FIX 2 (code, 63_calibrate.py) — 63-A1: the solve objective DOES exist,
+methodology §9-P1: solve deflation per code class so the 99.5th percentile
+of provider-day hours (excluding high_day_flag providers) lands at
+DAILY_CAP_HRS. Implement that solve; keep anchors as the starting point
+and as fallback if the solve is degenerate. 63-A3's circularity note
+stands: first run uses the blend, rerun after 64 verifies.
+
+RULING (68-A1): specialty_ctg_cd grain is CORRECT for dem_segment_split —
+the anchor lives at ctg grain and rule 6 bridges exactly once at the fill
+join. Amend the data model's cms_specialty reference on that table to
+specialty_ctg_cd, and note cap_fill_result/cap_county_risk carry the
+bridged cms_specialty from the fill join onward.
+
+DOC AMENDMENTS (all four you listed): SHARE_STABILITY_TOL into the
+cap_params param list; the 68 specialty ruling above; cap_fill_result
+extra columns (epdb_dw_prvdr_id, specialty_ctg_cd, signal_src_cd);
+cap_provider_year single-year note ("capacity base year = 2025; 2024
+retained in cap_hours_annual for intake windows and stability checks").
+
+APPROVED AS-IS (log nothing, change nothing): all remaining assumptions,
+including 65-A1 (2025 base year — correct), 64-A4 (raw>24 — correct),
+67-A1 (panel_cnt weight, v1), 69-A1 (same-county fill; add one line to
+methodology Limitations: "14. Fill places patients within their own
+county only; cross-county access understated — conservative."), V7/V8
+stubs, V9 name-only join with its caution note.
+
+Append to pack under "## Prompt M63-72 triage". Confirm edits, then
+Deepan begins the run streak.

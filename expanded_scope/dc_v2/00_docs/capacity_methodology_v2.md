@@ -123,6 +123,9 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 | CD-19 | Visit-count ceiling fallback per specialty | Graceful degradation when time coverage poor |
 | CD-20 | Segment chronic_flag = HCC_v24 mapping, 24m lookback, matching 46/48 exactly | One chronic definition across all layers; the data model's earlier AHRQ CCIR reference was an error and is corrected. |
 | CD-21 | CMS-only providers keep NULL hours in v1 | Zero Aetna share zeroes their contribution regardless; specialty mapping deferred. |
+| CD-22 | Individuals-only at module 65: ent_cd 'O' excluded; NULL/'ZZZZ' specialty excluded; unmatched-npi-with-real-specialty kept as ind_src_cd='ASSUMED'; exclusion counts printed | Ceilings model an individual's workday (CD-11); org billers and unusable specialties would distort cohorts. |
+| CD-23 | Team uplift (module 65): hours trimmed by the daily cap are summed per provider as team_uplift_hrs; absorbing capacity for the fill = personal spare + team_uplift_hrs; peer benchmarks (module 66) use CAPPED rates only — uplift never enters cohort math; no growth applied to uplift | Over-cap hours signal team billing (Stage 3 high-day flag) — real throughput that can absorb demand, but not a personal-hours rate fit for peer benchmarks. |
+| CD-24 | Facility pass-through lane in fill (module 69): facility/org IDs excluded by CD-22 keep their historical market share per county x specialty x segment; their share of growth_demand is absorbed with no ceiling and no matrix check, tagged absorbed_by='FACILITY'; only the remaining share is dealt to individual providers through the two-pass fill | Facilities absorb real demand but have no workday/ceiling construct (CD-11); dropping their share would overstate unplaced risk. |
 
 ## 10. Limitations (report verbatim)
 
@@ -138,6 +141,8 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 10. Vintage mismatch (CMS 2023 vs internal 2025).
 11. The internal claims source has no modifier column. Lines where the doctor only interpreted a test vs ran the machine cannot be separated; some imaging/test lines carry full minutes they may not deserve. Absorbed by calibration, stated here.
 12. About 5% of claim lines carry a blank or unusable procedure code and contribute zero minutes; counted in the V1 materiality check.
+13. Hours-to-visits conversion uses each county's current average visit length; if sliders shift patient mix sharply toward complex patients, that average drifts — second-order at a 1-year horizon.
+14. Fill places patients within their own county only; cross-county access understated — conservative.
 
 ## 11. Parked items
 
