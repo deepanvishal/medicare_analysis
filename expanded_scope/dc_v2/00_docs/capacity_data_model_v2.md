@@ -64,16 +64,18 @@ Grain: param_nm × param_scope.
 | run_ts | TIMESTAMP | |
 
 ## 4. `cap_observed_detail` — Stage 1 (module 61) (modified: Type filter)
-Key: npi × prvdr_county × src × period_start, plus hcpcs_cd for AETNA_MA rows; CMS_FFS rows have hcpcs_cd = NULL and one row per npi × county × year.
+Key: npi × prvdr_county × src × period_start, plus hcpcs_cd for AETNA_MA rows; CMS_FFS rows have hcpcs_cd = NULL and one row per npi × county × year. Grouping is by BOTH provider keys (npi + epdb_dw_prvdr_id).
 
 | Column | Type | Notes |
 |---|---|---|
 | npi | STRING | PK part. **NPI Type 1 only** (Type 2 excluded upstream) |
+| epdb_dw_prvdr_id | STRING | Key part, internal Aetna id; npi NULL when xwalk-unmatched |
 | specialty_ctg_cd | STRING | |
 | prvdr_county | STRING | PK part. **Never mbr_county_cd** |
+| prvdr_state_cd | STRING | Internal: UPPER(LEFT(prvdr_submarket, 2)); CMS: rndrng_prvdr_state_abrvtn |
 | hcpcs_cd | STRING | Key part for AETNA_MA rows only; NULL on CMS_FFS rows |
 | src | STRING | PK part. 'CMS_FFS'/'AETNA_MA'. 'CMS_FFS' rows come from cms_medicare_physician_ffs_2023 at provider-year grain with hcpcs_cd = NULL (the summary file has no procedure detail); only 'AETNA_MA' rows carry hcpcs_cd |
-| period_type | STRING | 'YEAR' (CMS) / 'MONTH' (Aetna) |
+| period_type | STRING | 'YEAR' (CMS) / 'DAY' (Aetna; period_start = svc_start_dt — one claims scan serves modules 61 and 62) |
 | period_start | DATE | PK part |
 | svc_cnt | INT64 | |
 | mbr_cnt | INT64 | CMS suppressed <11 → NULL, never 0 |
@@ -97,8 +99,11 @@ Grain: npi × prvdr_county × src.
 | Column | Type | Notes |
 |---|---|---|
 | npi, prvdr_county, src | | PK |
+| period_yr | INT64 | 2023 CMS / 2024 / 2025 internal — vintages never mixed |
 | specialty_ctg_cd | STRING | |
-| defl_hrs_yr | FLOAT64 | For src = 'CMS_FFS': hours = med_tot_srvcs x the provider's own avg_mins_per_svc from their AETNA_MA rows (cohort average when the provider has no Aetna rows), deflated — code-level minutes apply to the internal side only |
+| raw_hrs_yr | FLOAT64 | For src = 'CMS_FFS': med_tot_srvcs x avg_mins_per_svc — code-level minutes apply to the internal side only |
+| defl_hrs_yr | FLOAT64 | NULL until module 64 |
+| avg_mins_src_cd | STRING | 'OWN'/'COHORT'/NULL |
 | svc_cnt_yr, mapped_svc_cnt, unmapped_svc_cnt | INT64 | |
 | avg_mins_per_svc | FLOAT64 | Hours↔visits conversion |
 | ceiling_unit_cd | STRING | 'HOURS' / 'VISITS' (per-specialty fallback, CD-19) |
@@ -250,6 +255,7 @@ Grain: metric_cd × scope. Long format.
 8. **Aetna share applied only in Stage 9** — never in matrix, fill, or ceiling.
 9. Vintages carried in `period_start`; never mixed silently.
 10. All cap_/ref_ tables in modules 59-72 are created and read via cfg.table() (house prefix). A bare table name in any 59-72 script is a defect.
+11. CMS-only providers (no internal rows) carry NULL hours and no specialty_ctg_cd — acceptable because zero Aetna volume means zero willing capacity under Stage 9 rules; revisit only for total-market analyses (decision CD-21).
 
 ## Open items for confirmation
 

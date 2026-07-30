@@ -30,7 +30,7 @@ Pipeline code: modules 60–72 in `expanded_scope/dc_v2/08_capacity_risk/`. Supe
 
 ## 3. Layer 1 — Hours ceiling (carried from v1.1, condensed)
 
-**Stage 0 (module 60)** Load MPFS Physician Time File → `ref_mpfs_time`. Intra-service minutes only. The internal claims source has no modifier column (limitation 11); minutes apply as loaded. The time file's own modifier rows are excluded at load (module 60 keeps blank-modifier rows only). Match key is **procedure code (CPT/HCPCS)**, never ICD. Materiality gate: unmapped volume per county × specialty must be too small to flip any gap direction. Fallback ladder for unmapped codes: code-family average → provider's own avg minutes → cohort avg. If a specialty's coverage is structurally poor, that specialty downgrades to a **visit-count ceiling** (same logic, visits instead of hours) — logged per specialty.
+**Stage 0 (module 60)** Load MPFS Physician Time File → `ref_mpfs_time`. Intra-service minutes only. The internal claims source has no modifier column (limitation 11); minutes apply as loaded. The time file has no modifier column; all rows load. Match key is **procedure code (CPT/HCPCS)**, never ICD. Materiality gate: unmapped volume per county × specialty must be too small to flip any gap direction. Unmatched procedure codes get ZERO minutes by default — module 60 evidence shows unmatched volume is dominated by quality-reporting F-codes, supplies, drugs, and blank codes, none of which consume physician time. The family-average/provider-average fallback applies ONLY to unmatched codes that are 5-digit numeric CPT in clinical ranges; everything else is zero. If a specialty's coverage is structurally poor, that specialty downgrades to a **visit-count ceiling** (same logic, visits instead of hours) — logged per specialty.
 
 **Stage 1 (module 61)** Observed throughput per NPI from CMS FFS public file (annual, no dates) + internal Aetna MA claims (dated). **prvdr_county only.** NPI Type filter applied here.
 
@@ -122,6 +122,7 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 | CD-18 | Sticky shares, 1-year horizon only | Testable against actual flows; not defensible longer |
 | CD-19 | Visit-count ceiling fallback per specialty | Graceful degradation when time coverage poor |
 | CD-20 | Segment chronic_flag = HCC_v24 mapping, 24m lookback, matching 46/48 exactly | One chronic definition across all layers; the data model's earlier AHRQ CCIR reference was an error and is corrected. |
+| CD-21 | CMS-only providers keep NULL hours in v1 | Zero Aetna share zeroes their contribution regardless; specialty mapping deferred. |
 
 ## 10. Limitations (report verbatim)
 
@@ -136,6 +137,7 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 9. Capacity is a range (low/high); ceiling_low used for risk (conservative — overstates risk rather than hiding it).
 10. Vintage mismatch (CMS 2023 vs internal 2025).
 11. The internal claims source has no modifier column. Lines where the doctor only interpreted a test vs ran the machine cannot be separated; some imaging/test lines carry full minutes they may not deserve. Absorbed by calibration, stated here.
+12. About 5% of claim lines carry a blank or unusable procedure code and contribute zero minutes; counted in the V1 materiality check.
 
 ## 11. Parked items
 
@@ -153,7 +155,7 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 
 **Module 61 `61_observed.py`** — [ ] NPI Type 1 filter; [ ] prvdr_county only (mandatory review); [ ] SAFE_CAST suppression values; [ ] M1 NPI match rate reported
 
-**Module 62 `62_hours.py`** — [ ] confirm no modifier handling (limitation 11); [ ] deflation from `cap_params`; [ ] fallback ladder for unmapped codes
+**Module 62 `62_hours.py`** — [ ] confirm no modifier handling (limitation 11); [ ] deflation from `cap_params`; [ ] zero-minute default; clinical-CPT fallback only
 
 **Module 63 `63_calibrate.py`** — [ ] deflation solved; [ ] daily cap elbow in 6–12; [ ] percentile rank-stability; [ ] min cohort n by resampling; [ ] credibility k by reconciliation error; [ ] all → `cap_params` with notes
 

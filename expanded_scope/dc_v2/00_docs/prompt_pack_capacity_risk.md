@@ -233,3 +233,128 @@ defect."
 
 Change nothing else. Output: the edited file. Append this prompt to the
 pack under "## Prompt M60b — table prefix rule".
+
+## Prompt M60c — zero-minute rule
+
+You cannot run anything.
+
+Two edits to capacity_methodology_v2.md, Stage 0:
+
+Edit 1 — replace the fallback-ladder sentence with: "Unmatched procedure
+codes get ZERO minutes by default — module 60 evidence shows unmatched
+volume is dominated by quality-reporting F-codes, supplies, drugs, and
+blank codes, none of which consume physician time. The
+family-average/provider-average fallback applies ONLY to unmatched codes
+that are 5-digit numeric CPT in clinical ranges; everything else is zero."
+
+Edit 2 — the leftover stale sentence "The time file's own modifier rows
+are excluded at load (module 60 keeps blank-modifier rows only)" — replace
+with: "The time file has no modifier column; all rows load."
+
+Also append to the Limitations list: "12. About 5% of claim lines carry a
+blank or unusable procedure code and contribute zero minutes; counted in
+the V1 materiality check."
+
+Change nothing else. Output: the edited file. Append this prompt to the
+pack under "## Prompt M60c — zero-minute rule".
+
+## Prompt M61-62 batch
+
+You cannot run anything. No BigQuery execution. Deepan runs everything.
+Read first: 00_docs/PLAN.md, capacity_methodology_v2.md,
+capacity_data_model_v2.md.
+
+STANDING RULES for this and all future 08_capacity_risk scripts:
+R1. Internal claims come ONLY from A870800_medicare_analysis_2025_claims.
+    Never EMIS_CLAIM_LINE.
+R2. Every script gets RUN_MODE = 'sample' | 'full' at top. sample filters
+    internal claims to MOD(ABS(FARM_FINGERPRINT(CAST(member_id AS
+    STRING))), 100) = 0 (1% of members) and prints elapsed seconds per
+    query. Deepan times sample before running full.
+R3. Before finishing each script, run three adversarial self-reviews and
+    write findings as a REVIEW block comment at the bottom:
+    - Reviewer 1 LOGIC: attribution columns (prvdr_county for capacity),
+      join keys verified against actual repo code, no fabricated columns.
+    - Reviewer 2 SPEC: every column and rule traced to the two spec docs;
+      deviations listed explicitly.
+    - Reviewer 3 EFFICIENCY: scan count over the claims table (must be 1
+      per script), no CROSS JOINs, no row-explosion joins; estimated
+      relative cost note.
+    Any unresolved concern from any reviewer = STOP and ask instead of
+    writing the script.
+
+DOC MICRO-AMENDMENTS first (do these before the scripts):
+- capacity_data_model_v2.md, cap_observed_detail: internal AETNA_MA rows
+  are DAY grain — period_type 'DAY', period_start = svc_start_dt. Update
+  the period_type Notes. Reason: one claims scan serves both modules.
+- capacity_methodology_v2.md Module 62 checklist: replace "[ ] fallback
+  ladder for unmapped codes" with "[ ] zero-minute default; clinical-CPT
+  fallback only".
+
+SCRIPT 1 — 61_observed.py -> table cap_observed_detail
+- Internal side: one scan of A870800_medicare_analysis_2025_claims,
+  srv_start_dt in 2024-01-01..2025-12-31. Group to epdb_dw_prvdr_id x
+  prcdr_cd x prvdr_county x specialty_ctg_cd x svc_start_dt. svc_cnt =
+  visit definition from 48 (distinct member x provider x date collapses to
+  the day row); mbr_cnt = distinct members. Attach npi via
+  xwalk_pin_npi_all — READ the repo's existing use of that xwalk to get
+  the true join keys; if ambiguous, STOP and ask. Keep BOTH keys
+  (epdb_dw_prvdr_id AND npi; npi NULL when unmatched, count printed).
+  src='AETNA_MA', period_type='DAY'.
+- CMS side: from cms_medicare_physician_ffs_2023 WHERE rndrng_prvdr_ent_cd
+  = 'I' AND state in the FL/OH/AZ/IL footprint. Derive prvdr_county in the
+  SAME NAME FORMAT as internal rows: zip5 -> county via the repo's zip
+  xwalk pattern, then fips -> county name via ref_county. READ ref_county's
+  actual columns first; if the fips-to-name mapping is not derivable, STOP
+  and ask. One row per npi x year: src='CMS_FFS', period_type='YEAR',
+  period_start=2023-01-01, svc_cnt=med_tot_srvcs, hcpcs_cd=NULL,
+  mbr_cnt=tot_benes.
+- Sanity prints: row counts by src; npi match rate internal side; distinct
+  counties by src; sample of 5 county names per src side-by-side (visual
+  format check).
+
+SCRIPT 2 — 62_hours.py -> tables cap_hours_daily, cap_hours_annual
+- Reads ONLY cap_observed_detail + ref_mpfs_time. No claims scan.
+- RAW minutes only in this module (deflation happens in module 64 after
+  calibration): line_mins = svc_cnt x intra_mins; unmatched hcpcs = 0
+  minutes per the Stage 0 zero-minute rule; blank/NULL hcpcs = 0.
+- cap_hours_daily (internal rows only): npi x prvdr_county x svc_dt with
+  raw_hrs, mapped_svc_cnt, unmapped_svc_cnt. Column defl_hrs created but
+  NULL (filled by module 64).
+- cap_hours_annual (both sources): internal = sum of daily; CMS =
+  med_tot_srvcs x provider's own avg raw mins per matched internal service
+  (SAFE_DIVIDE of the provider's internal raw minutes over matched
+  services); cohort (specialty x state) average when the provider has no
+  matched internal rows; store which path via avg_mins_src_cd
+  'OWN'/'COHORT'. Include avg_mins_per_svc and ceiling_unit_cd='HOURS'.
+- Sanity prints: total raw hours by src; % CMS rows on COHORT fallback;
+  top 10 providers by raw annual hours with their specialty (eyeball
+  check for absurd values).
+
+Outputs: the two .py files plus the two doc micro-edits. Append this full
+prompt to the pack under "## Prompt M61-62 batch".
+
+## Prompt M61b — doc catch-up
+
+You cannot run anything.
+
+Doc catch-up for the module 61/62 REVIEW deviations — edit
+capacity_data_model_v2.md:
+
+1. cap_observed_detail: add rows for epdb_dw_prvdr_id (key part, internal
+   Aetna id; npi NULL when xwalk-unmatched) and prvdr_state_cd (internal:
+   UPPER(LEFT(prvdr_submarket,2)); CMS: rndrng_prvdr_state_abrvtn). Key
+   note: grouping is by BOTH provider keys.
+2. cap_hours_annual: add period_yr (2023 CMS / 2024 / 2025 internal —
+   vintages never mixed), rename defl_hrs_yr note to "NULL until module
+   64", add raw_hrs_yr and avg_mins_src_cd ('OWN'/'COHORT'/NULL).
+3. Add one line under Cross-cutting rules: "CMS-only providers (no
+   internal rows) carry NULL hours and no specialty_ctg_cd — acceptable
+   because zero Aetna volume means zero willing capacity under Stage 9
+   rules; revisit only for total-market analyses (decision CD-21)."
+
+And capacity_methodology_v2.md decision log, append:
+| CD-21 | CMS-only providers keep NULL hours in v1 | Zero Aetna share
+zeroes their contribution regardless; specialty mapping deferred. |
+
+Change nothing else. Append to pack under "## Prompt M61b — doc catch-up".
