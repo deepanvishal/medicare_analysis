@@ -87,6 +87,7 @@ Grain: npi × prvdr_county × svc_dt.
 | Column | Type | Notes |
 |---|---|---|
 | npi, prvdr_county, svc_dt | | PK |
+| prvdr_state_cd | STRING | rule 12 — county never stands alone |
 | raw_hrs | FLOAT64 | No deflation |
 | defl_hrs | FLOAT64 | Deflated |
 | unmapped_svc_cnt | INT64 | Feeds V1 |
@@ -125,6 +126,7 @@ Grain: npi × prvdr_county.
 | Column | Type | Notes |
 |---|---|---|
 | npi, prvdr_county | | PK |
+| prvdr_state_cd | STRING | rule 12 — county never stands alone |
 | specialty_ctg_cd, county_band_cd | STRING | Band from CMS SSA file |
 | capped_hrs_yr | FLOAT64 | |
 | fte_days_yr | FLOAT64 | Internal Σ frac_day; CMS estimated |
@@ -144,6 +146,7 @@ Grain: specialty_ctg_cd × county_band_cd × segment_cd (segment_cd = 'ALL' row 
 | Column | Type | Notes |
 |---|---|---|
 | specialty_ctg_cd, county_band_cd, segment_cd | | PK ('ALL' = ceiling row) |
+| prvdr_state_cd | STRING | rule 12 — county never stands alone |
 | bench_rate_hrs_day | FLOAT64 | Populated on 'ALL' row |
 | median_fte_days | FLOAT64 | 'ALL' row |
 | cohort_intake_rate | FLOAT64 | New patients/active month, per segment row |
@@ -158,6 +161,7 @@ Grain: npi × prvdr_county × segment_cd.
 | Column | Type | Notes |
 |---|---|---|
 | npi, prvdr_county, segment_cd | | PK |
+| prvdr_state_cd | STRING | rule 12 — county never stands alone |
 | panel_cnt | INT64 | Current patients in segment |
 | panel_share | FLOAT64 | Σ per npi×county = 1.0 |
 | own_intake_rate | FLOAT64 | New patients/active month |
@@ -175,6 +179,7 @@ Grain: mbr_county_cd × cms_specialty × segment_cd. **Demand grain = member cou
 | Column | Type | Notes |
 |---|---|---|
 | mbr_county_cd, cms_specialty, segment_cd | | PK |
+| mbr_state_cd | STRING | Derived from mbr_submarket per the locked fact; rule 12 — county never stands alone |
 | anchor_demand | FLOAT64 | From dc_v2 forecast (county × specialty total) |
 | segment_share | FLOAT64 | Observed; Σ per county×specialty = 1.0 (V5) |
 | segment_demand | FLOAT64 | anchor × share |
@@ -189,9 +194,11 @@ Grain: npi × prvdr_county × segment_cd (provider rows) + county remainder rows
 | Column | Type | Notes |
 |---|---|---|
 | mbr_county_cd | STRING | PK part — demand origin |
+| mbr_state_cd | STRING | Demand side; rule 12 — county never stands alone |
 | cms_specialty, segment_cd | STRING | PK part |
 | npi | STRING | PK part; NULL on remainder rows |
 | prvdr_county | STRING | NULL on remainder rows |
+| prvdr_state_cd | STRING | Provider side; NULL on remainder rows; rule 12 — county never stands alone |
 | seg_market_share | FLOAT64 | Re-normalized over open doors |
 | pass1_alloc_cnt | FLOAT64 | |
 | returned_cnt | FLOAT64 | Above caps |
@@ -206,6 +213,7 @@ Grain: npi × prvdr_county.
 | Column | Type | Notes |
 |---|---|---|
 | npi, prvdr_county | | PK |
+| prvdr_state_cd | STRING | rule 12 — county never stands alone |
 | contracted_flag | INT64 | From ms_ network table |
 | aetna_ma_svc_cnt, cms_ffs_svc_cnt | INT64 | |
 | aetna_share | FLOAT64 | SAFE_DIVIDE(a, a+c), [0,1] |
@@ -220,6 +228,7 @@ Grain: mbr_county_cd × cms_specialty × segment_cd.
 | Column | Type | Notes |
 |---|---|---|
 | mbr_county_cd, cms_specialty, segment_cd | | PK |
+| mbr_state_cd | STRING | Derived from mbr_submarket per the locked fact; rule 12 — county never stands alone |
 | growth_demand | FLOAT64 | |
 | placed_cnt | FLOAT64 | |
 | unplaced_cnt | FLOAT64 | The risk number |

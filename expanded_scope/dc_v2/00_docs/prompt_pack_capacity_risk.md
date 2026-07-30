@@ -358,3 +358,21 @@ And capacity_methodology_v2.md decision log, append:
 zeroes their contribution regardless; specialty mapping deferred. |
 
 Change nothing else. Append to pack under "## Prompt M61b — doc catch-up".
+
+## Prompt M62b — state everywhere
+
+You cannot run anything.
+
+Edit 1 — capacity_data_model_v2.md, batch state-column amendment: add
+prvdr_state_cd to cap_hours_daily, cap_provider_year, cap_cohort_bench,
+cap_provider_segment, cap_willing; add mbr_state_cd (derived from
+mbr_submarket per the locked fact) to dem_segment_split and
+cap_county_risk; cap_fill_result gets both (demand side mbr_state_cd,
+provider side prvdr_state_cd). Note each as "rule 12 — county never
+stands alone".
+
+Edit 2 — 62_hours.py: add prvdr_state_cd to cap_hours_daily (carried from
+cap_observed_detail), include it in the table write and grain comment.
+
+Change nothing else. Append to pack under "## Prompt M62b — state
+everywhere".

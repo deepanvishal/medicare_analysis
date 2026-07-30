@@ -9,8 +9,9 @@ WHAT  : Turns cap_observed_detail into RAW clinical hours. No deflation here
         hours = med_tot_srvcs x avg raw minutes per matched internal service
         (provider's OWN rate, else specialty x state COHORT rate; NULL when
         the provider has no internal presence at all - share printed).
-GRAIN : cap_hours_daily  -> npi/epdb_dw_prvdr_id x prvdr_county x svc_dt
-        (AETNA_MA only)
+GRAIN : cap_hours_daily  -> npi/epdb_dw_prvdr_id x prvdr_county +
+        prvdr_state_cd x svc_dt (AETNA_MA only; rule 12 — county never
+        stands alone)
         cap_hours_annual -> provider x prvdr_county x src x period_yr
         (internal 2024, 2025; CMS 2023)
 INPUTS: cap_observed_detail + ref_mpfs_time only. No claims scan.
@@ -60,6 +61,7 @@ SELECT
   o.npi,
   o.epdb_dw_prvdr_id,
   o.prvdr_county,
+  o.prvdr_state_cd,
   o.period_start                        AS svc_dt,
   SUM(IF(m.hcpcs_cd IS NOT NULL,
          o.svc_cnt * COALESCE(m.intra_mins, 0), 0)) / 60 AS raw_hrs,
@@ -71,7 +73,7 @@ FROM `{OBS}` o
 LEFT JOIN `{MPFS}` m
   ON o.hcpcs_cd = m.hcpcs_cd
 WHERE o.src = 'AETNA_MA'
-GROUP BY 1, 2, 3, 4
+GROUP BY 1, 2, 3, 4, 5
 """
 
 DDL_ANNUAL = f"""
