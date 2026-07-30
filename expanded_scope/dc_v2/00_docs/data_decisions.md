@@ -532,9 +532,12 @@ member-side geography both come from this source and chain.
 
 Two external sources enter the pipeline for modules 60–72 only:
 
-1. cms_medicare_physician_ffs_2023 (BigQuery). Annual grain, NPI x HCPCS.
-   No service dates — daily-grain logic runs on internal claims only; CMS
-   FTE-days are ESTIMATED and tagged fte_days_src_cd = 'ESTIMATED'.
+1. cms_medicare_physician_ffs_2023 (BigQuery). Annual grain, one row per
+   rndrng_npi (the CMS by-Provider summary file, loaded by module 59 as
+   cms_medicare_physician_ffs_2023). No HCPCS detail and no service dates.
+   Individual-vs-organization comes from rndrng_prvdr_ent_cd ('I'/'O').
+   Daily-grain logic runs on internal claims only; CMS FTE-days are
+   ESTIMATED and tagged fte_days_src_cd = 'ESTIMATED'.
    Suppressed cells ('*', '#', counts under 11): SAFE_CAST to NULL, never 0.
    Vintage 2023 combined with internal 2025 under a ratio-stability
    assumption (CD-09 in capacity_methodology_v2.md); retest when the CMS

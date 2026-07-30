@@ -64,16 +64,15 @@ Grain: param_nm × param_scope.
 | run_ts | TIMESTAMP | |
 
 ## 4. `cap_observed_detail` — Stage 1 (module 61) (modified: Type filter)
-Grain: npi × hcpcs_cd × prvdr_county × src × period_start.
+Key: npi × prvdr_county × src × period_start, plus hcpcs_cd for AETNA_MA rows; CMS_FFS rows have hcpcs_cd = NULL and one row per npi × county × year.
 
 | Column | Type | Notes |
 |---|---|---|
 | npi | STRING | PK part. **NPI Type 1 only** (Type 2 excluded upstream) |
 | specialty_ctg_cd | STRING | |
 | prvdr_county | STRING | PK part. **Never mbr_county_cd** |
-| hcpcs_cd | STRING | PK part |
-| modifier_grp_cd | STRING | 'TC'/'26'/'NONE' |
-| src | STRING | PK part. 'CMS_FFS'/'AETNA_MA' |
+| hcpcs_cd | STRING | Key part for AETNA_MA rows only; NULL on CMS_FFS rows |
+| src | STRING | PK part. 'CMS_FFS'/'AETNA_MA'. 'CMS_FFS' rows come from cms_medicare_physician_ffs_2023 at provider-year grain with hcpcs_cd = NULL (the summary file has no procedure detail); only 'AETNA_MA' rows carry hcpcs_cd |
 | period_type | STRING | 'YEAR' (CMS) / 'MONTH' (Aetna) |
 | period_start | DATE | PK part |
 | svc_cnt | INT64 | |
@@ -99,7 +98,7 @@ Grain: npi × prvdr_county × src.
 |---|---|---|
 | npi, prvdr_county, src | | PK |
 | specialty_ctg_cd | STRING | |
-| defl_hrs_yr | FLOAT64 | |
+| defl_hrs_yr | FLOAT64 | For src = 'CMS_FFS': hours = med_tot_srvcs x the provider's own avg_mins_per_svc from their AETNA_MA rows (cohort average when the provider has no Aetna rows), deflated — code-level minutes apply to the internal side only |
 | svc_cnt_yr, mapped_svc_cnt, unmapped_svc_cnt | INT64 | |
 | avg_mins_per_svc | FLOAT64 | Hours↔visits conversion |
 | ceiling_unit_cd | STRING | 'HOURS' / 'VISITS' (per-specialty fallback, CD-19) |

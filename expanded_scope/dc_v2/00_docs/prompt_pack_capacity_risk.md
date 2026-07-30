@@ -134,3 +134,87 @@ containing two lines: *.csv and *.xlsx — raw inputs never get committed.
 
 Outputs: the .py file and the .gitignore. Append this prompt verbatim to
 00_docs/prompt_pack_capacity_risk.md under "## Prompt M59".
+
+## Prompt M59c — stale modifier cleanup
+
+You cannot run anything.
+
+Cleanup of the stale spots you flagged, plus the duplicate:
+
+Edit 1 — data_decisions.md DD 09 item 1: collapse the duplicated "no
+service dates" so it's stated once.
+
+Edit 2 — capacity_methodology_v2.md Stage 0: replace the "-TC -> 0 min /
+-26 -> full" modifier rule sentence with: "The internal claims source has
+no modifier column (limitation 11); minutes apply as loaded. The time
+file's own modifier rows are excluded at load (module 60 keeps
+blank-modifier rows only)."
+
+Edit 3 — capacity_methodology_v2.md, module 62 checklist: replace the
+"[ ] modifier rules" line with "[ ] confirm no modifier handling
+(limitation 11)".
+
+Edit 4 — capacity_data_model_v2.md, cap_observed_detail: remove the
+modifier_grp_cd column row, and change the key definition so hcpcs_cd is
+part of the key for AETNA_MA rows only — state it as: key = npi x
+prvdr_county x src x period_start, plus hcpcs_cd for AETNA_MA rows;
+CMS_FFS rows have hcpcs_cd = NULL and one row per npi x county x year.
+
+Change nothing else. Output: the edited files only. Append this prompt to
+the prompt pack under "## Prompt M59c — stale modifier cleanup".
+
+## Prompt M60
+
+You cannot run anything. No BigQuery execution. Deepan runs everything.
+
+Read first: 00_docs/PLAN.md, capacity_methodology_v2.md (Stage 0),
+capacity_data_model_v2.md (ref_mpfs_time, ref_segment).
+
+Create expanded_scope/dc_v2/08_capacity_risk/60_load_time_file.py
+House docstring style from 48, config pattern like module 59.
+
+INPUT (hardcode):
+expanded_scope/dc_v2/08_capacity_risk/inputs/CMS-1807-F_Work_Time_16OCT24.xlsx
+tab 'Work Time'.
+
+FIRST ACTION: read and print the tab's header row. Map columns via a
+COLUMN_MAP dict marked TODO VERIFY for: hcpcs code, modifier, the three
+pre-service time columns, intra-service time, and the post-service time
+columns. If any mapping target is absent from the real header, STOP and
+print the header.
+
+LOAD RULES:
+- Keep only rows where the modifier column is blank/null. Print the count
+  of hcpcs codes that appear ONLY with a modifier value (excluded codes).
+- pre_mins = sum of the three pre-service columns, SAFE numeric each.
+- intra_mins = intra-service column, SAFE numeric.
+- post_mins = sum of post-service time columns present, SAFE numeric.
+- code_class_cd: hcpcs starting '99' -> 'EM'; numeric hcpcs between 10021
+  and 69990 -> 'PROC'; else 'OTHER'.
+- code_family_cd = first 3 characters of hcpcs.
+- mpfs_cy = 2025.
+- Write ref_mpfs_time via cfg pattern, WRITE_TRUNCATE.
+
+SEED ref_segment, exactly 8 rows (segment_cd, new_flag, chronic_flag,
+age_band_cd, segment_nm):
+NEW_CHR_60_74,1,1,60_74,New chronic 60-74
+NEW_CHR_75P,1,1,75P,New chronic 75+
+NEW_NONCHR_60_74,1,0,60_74,New non-chronic 60-74
+NEW_NONCHR_75P,1,0,75P,New non-chronic 75+
+RET_CHR_60_74,0,1,60_74,Returning chronic 60-74
+RET_CHR_75P,0,1,75P,Returning chronic 75+
+RET_NONCHR_60_74,0,0,60_74,Returning non-chronic 60-74
+RET_NONCHR_75P,0,0,75P,Returning non-chronic 75+
+
+MATCH-RATE REPORT (the module 60 gate), one BigQuery query the script runs
+and prints: join A870800_medicare_analysis_2025_claims.prcdr_cd (UPPER,
+TRIM) to ref_mpfs_time.hcpcs_cd. Print: total claim lines, matched lines,
+match % overall, match % by specialty_ctg_cd (sorted worst first), and top
+25 unmatched prcdr_cd values by line count. No CMS-side match query — the
+CMS table has no procedure detail.
+
+SANITY PRINTS: ref_mpfs_time row count; % rows intra_mins > 0;
+code_class_cd distribution; ref_segment count (must be 8).
+
+Outputs: the .py file. Append this prompt verbatim to
+00_docs/prompt_pack_capacity_risk.md under "## Prompt M60".

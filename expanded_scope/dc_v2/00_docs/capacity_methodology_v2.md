@@ -30,7 +30,7 @@ Pipeline code: modules 60–72 in `expanded_scope/dc_v2/08_capacity_risk/`. Supe
 
 ## 3. Layer 1 — Hours ceiling (carried from v1.1, condensed)
 
-**Stage 0 (module 60)** Load MPFS Physician Time File → `ref_mpfs_time`. Intra-service minutes only; modifier -TC → 0 min, -26 → full. Match key is **procedure code (CPT/HCPCS)**, never ICD. Materiality gate: unmapped volume per county × specialty must be too small to flip any gap direction. Fallback ladder for unmapped codes: code-family average → provider's own avg minutes → cohort avg. If a specialty's coverage is structurally poor, that specialty downgrades to a **visit-count ceiling** (same logic, visits instead of hours) — logged per specialty.
+**Stage 0 (module 60)** Load MPFS Physician Time File → `ref_mpfs_time`. Intra-service minutes only. The internal claims source has no modifier column (limitation 11); minutes apply as loaded. The time file's own modifier rows are excluded at load (module 60 keeps blank-modifier rows only). Match key is **procedure code (CPT/HCPCS)**, never ICD. Materiality gate: unmapped volume per county × specialty must be too small to flip any gap direction. Fallback ladder for unmapped codes: code-family average → provider's own avg minutes → cohort avg. If a specialty's coverage is structurally poor, that specialty downgrades to a **visit-count ceiling** (same logic, visits instead of hours) — logged per specialty.
 
 **Stage 1 (module 61)** Observed throughput per NPI from CMS FFS public file (annual, no dates) + internal Aetna MA claims (dated). **prvdr_county only.** NPI Type filter applied here.
 
@@ -135,6 +135,7 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 8. Segment behavior fixed: mix shifts with population, per-segment visit behavior itself not modeled in v1.
 9. Capacity is a range (low/high); ceiling_low used for risk (conservative — overstates risk rather than hiding it).
 10. Vintage mismatch (CMS 2023 vs internal 2025).
+11. The internal claims source has no modifier column. Lines where the doctor only interpreted a test vs ran the machine cannot be separated; some imaging/test lines carry full minutes they may not deserve. Absorbed by calibration, stated here.
 
 ## 11. Parked items
 
@@ -152,7 +153,7 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 
 **Module 61 `61_observed.py`** — [ ] NPI Type 1 filter; [ ] prvdr_county only (mandatory review); [ ] SAFE_CAST suppression values; [ ] M1 NPI match rate reported
 
-**Module 62 `62_hours.py`** — [ ] modifier rules; [ ] deflation from `cap_params`; [ ] fallback ladder for unmapped codes
+**Module 62 `62_hours.py`** — [ ] confirm no modifier handling (limitation 11); [ ] deflation from `cap_params`; [ ] fallback ladder for unmapped codes
 
 **Module 63 `63_calibrate.py`** — [ ] deflation solved; [ ] daily cap elbow in 6–12; [ ] percentile rank-stability; [ ] min cohort n by resampling; [ ] credibility k by reconciliation error; [ ] all → `cap_params` with notes
 
