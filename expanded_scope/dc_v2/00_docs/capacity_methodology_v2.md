@@ -143,6 +143,7 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 12. About 5% of claim lines carry a blank or unusable procedure code and contribute zero minutes; counted in the V1 materiality check.
 13. Hours-to-visits conversion uses each county's current average visit length; if sliders shift patient mix sharply toward complex patients, that average drifts — second-order at a 1-year horizon.
 14. Fill places patients within their own county only; cross-county access understated — conservative.
+15. A handful of providers (<10) with unresolved ID structure had county shares force-normalized; capacity magnitude unaffected.
 
 ## 11. Parked items
 

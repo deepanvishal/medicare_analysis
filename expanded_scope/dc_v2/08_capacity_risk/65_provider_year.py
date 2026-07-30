@@ -52,7 +52,9 @@ Run   : python expanded_scope/dc_v2/08_capacity_risk/65_provider_year.py
 #   and top up observed days; fte_days_src_cd = 'OBSERVED' when any
 #   internal days exist. Cohort benchmarks use the INTERNAL-only rate,
 #   published as int_capped_hrs_yr / int_fte_days_yr for module 66
-#   (identical bench numbers by construction).
+#   (identical bench numbers by construction). Providers still outside
+#   1 +/- 0.001 after all rulings are force-normalized (shares / sum),
+#   alloc_forced_flag = 1, count printed (limitation 15).
 
 import os
 import sys
@@ -343,6 +345,11 @@ SELECT COUNT(DISTINCT npi) AS npis_with_multiple_epdb
 FROM `{OUT}` WHERE multi_epdb_flag = 1
 """
 
+DIAG_FORCED = f"""
+SELECT COUNT(DISTINCT COALESCE(npi, epdb_dw_prvdr_id)) AS providers_force_normalized
+FROM `{OUT}` WHERE alloc_forced_flag = 1
+"""
+
 CE_STOP_THRESHOLD = 50   # c + e providers above this = STOP for key-grain decision
 
 CHECKS = {
@@ -386,6 +393,10 @@ def main():
 
     print("--- npis that merged more than one epdb id (canonical-pid ruling) ---")
     for row in _run(client, "multi-epdb merge count", DIAG_MULTI_EPDB):
+        print("  ", dict(row))
+
+    print("--- providers force-normalized (alloc_forced_flag = 1, limitation 15) ---")
+    for row in _run(client, "force-normalized count", DIAG_FORCED):
         print("  ", dict(row))
 
     print("--- ceiling_low_hrs in '(NULL)' county bucket "
@@ -440,9 +451,9 @@ if __name__ == "__main__":
 #    benchmark basis (internal rate only, A6).
 # Reviewer 2 SPEC:
 #  - Deviations = six ASSUMPTION blocks; A6 carries all three rulings
-#    (canonical pid, alloc grain, 65-66 alignment). New columns
-#    multi_epdb_flag, int_capped_hrs_yr, int_fte_days_yr - data model
-#    amendment pending.
+#    (canonical pid, alloc grain, 65-66 alignment) plus the force-normalize
+#    shortcut. New columns multi_epdb_flag, int_capped_hrs_yr,
+#    int_fte_days_yr, alloc_forced_flag - data model amendment pending.
 #  - CD-22 ind_src_cd / exclusions implemented as specified; counts printed.
 # Reviewer 3 EFFICIENCY:
 #  - Zero claims scans; reads module 62/64 outputs. All joins keyed on
