@@ -3,23 +3,21 @@
 
 WHAT  : Deals segment-level growth demand to providers -> cap_fill_result.
         CD-24 first: facility/org ids absorb their historical market share
-        (no ceiling, no matrix, fill_lane_cd = 'FACILITY'). Then TWO
-        individual lanes (CD-25), NEW before RET:
-        - NEW_* segments ('NEW_INTAKE'): cell caps + total constraint,
-          two passes (CD-16), unchanged mechanics.
-        - RET_* segments ('RET_PANEL'): intake caps do not apply -
-          returning patients go to the provider they already see. RET
-          growth distributes by each provider's CURRENT panel share of the
-          segment, constrained only by remaining total capacity (spare +
-          uplift MINUS hours consumed by NEW placements); overflow
-          re-splits by remaining room; remainder unplaced.
-        Specialty bridge applied HERE, exactly once (rule 6). GATE (V6):
-        placed + facility + unplaced = growth per county x spec x segment.
+        (peeled ONLY where the share > 0, and the lane row is always
+        emitted with it). Then TWO individual lanes (CD-25), NEW before
+        RET: NEW_* = cell caps + total constraint, two passes; RET_* = no
+        cell caps, panel-share split against remaining absorbing capacity.
+        CONSERVATION BY CONSTRUCTION: an explicit remainder row is emitted
+        for EVERY county x specialty x segment with growth_demand > 0
+        (unplaced = growth - placed), so demand can never vanish into
+        NULL shares, closed doors, or missing lane rows. V6 gate:
+        |placed + unplaced - growth| <= 0.5 patients per cell.
+        Specialty bridge applied HERE, exactly once (rule 6).
 GRAIN : provider rows npi/epdb x prvdr_county x segment (per lane) +
-        facility lane rows + county remainder rows (npi NULL)
+        facility lane rows + one remainder row per growth cell
 INPUTS: dem_segment_split, cap_provider_segment, cap_provider_year,
-        cap_cohort_bench, ms_ref_county, ref_specialty_crosswalk
-        (cfg.base), HCC map,
+        cap_cohort_bench, cap_hours_annual, ms_ref_county,
+        ref_specialty_crosswalk (cfg.base), HCC map,
         A870800_medicare_analysis_2025_claims (ONE scan - facility share)
 OUTPUT: cap_fill_result (BigQuery table) + V6 gate + sanity prints.
 Run   : python expanded_scope/dc_v2/08_capacity_risk/69_fill.py
@@ -32,27 +30,29 @@ Run   : python expanded_scope/dc_v2/08_capacity_risk/69_fill.py
 # ASSUMPTION [3]: CD-24 facility market share measured on the MEMBER-county
 #   lens (share of the county's observed 2025 visits, by chronic x age,
 #   delivered by internal ids absent from cap_provider_year).
-# ASSUMPTION [4]: dem_segment_split rows with segment_cd NULL go straight
-#   to unplaced remainder rows (no mix = no shares); volume printed.
+# ASSUMPTION [4]: dem_segment_split rows with segment_cd NULL get a
+#   remainder row carrying their full growth (no mix = no shares), lane
+#   NULL.
 # ASSUMPTION [5]: epdb_dw_prvdr_id, specialty_ctg_cd, signal_src_cd and
 #   fill_lane_cd carried in cap_fill_result; unbridged specialties keep
 #   cms_specialty NULL (leakage printed, per 55's handling).
 # ASSUMPTION [6]: CD-25 addendum: RET counts convert to hours via a
 #   returning-patient consumption rate per county x specialty =
 #   SUM(internal defl_hrs_yr 2025) / SUM(total panel_cnt) over that county
-#   x specialty's providers (cap_hours_annual over matrix panel data);
-#   fallback = the overall avg hours per patient. Hours cannot be split by
-#   segment without a claims scan, so total-hours-over-total-panel proxies
-#   the returning patient's annual consumption. avg_first_yr_hrs applies
-#   to the NEW lane only.
+#   x specialty's providers; fallback = the overall avg hours per patient.
+#   avg_first_yr_hrs applies to the NEW lane only.
 # ASSUMPTION [7]: in the RET lane, a provider's leftover hours after pass 1
 #   are split EQUALLY across their RET cells with a positive pool before
-#   pass 2 - prevents the same leftover being promised to four segment
-#   pools at once (deterministic, no cross-segment overdraw).
+#   pass 2 (deterministic, no cross-segment overdraw). Zero/NULL hours
+#   rates mean the budget cannot bind: the pass-1 scale coalesces to 1
+#   (place, consume no hours) rather than NULL-erasing demand (V6 fix d).
 # ASSUMPTION [8]: demand joins providers through cap_provider_year to
-#   REQUIRE a specialty match (the matrix has no specialty column). This
-#   also fixes a defect in the pre-CD-25 draft, which joined every county
-#   provider to every specialty's demand.
+#   REQUIRE a specialty match (the matrix has no specialty column).
+# ASSUMPTION [9]: V6-fix restructure: the remainder is computed by
+#   FULL-covering the demand side (growth - COALESCE(placed, 0) per cell,
+#   floored at 0) instead of per-lane pool arithmetic - cells with all
+#   closed doors, zero panels, no providers, or NULL capacity now land in
+#   unplaced instead of vanishing. Gate tolerance 0.5 patients (fix a).
 
 import os
 import sys
@@ -157,6 +157,8 @@ demand AS (
   WHERE d.growth_demand > 0
 ),
 laned AS (
+  -- fix (c): facility share peeled ONLY where > 0; its row is emitted from
+  -- this same value, so peel and emission cannot diverge
   SELECT
     dm.*,
     COALESCE(fs.facility_share, 0) AS facility_share,
@@ -168,13 +170,14 @@ laned AS (
     AND COALESCE(dm.mbr_state_cd, '') = COALESCE(fs.mbr_state_cd, '')
     AND dm.specialty_ctg_cd = fs.specialty_ctg_cd
     AND dm.seg_partial = fs.seg_partial
+    AND fs.facility_share > 0
   WHERE dm.segment_cd IS NOT NULL
 ),
 prov_dim AS (
   SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid,
          npi, epdb_dw_prvdr_id, prvdr_county, prvdr_state_cd,
          specialty_ctg_cd, county_band_cd,
-         spare_hrs + COALESCE(team_uplift_hrs, 0) AS absorbing_hrs
+         COALESCE(spare_hrs, 0) + COALESCE(team_uplift_hrs, 0) AS absorbing_hrs
   FROM `{PY}`
 ),
 bench_hrs AS (
@@ -196,8 +199,6 @@ prov_panel AS (
   GROUP BY 1, 2
 ),
 ret_rate AS (
-  -- CD-25 addendum (A6): returning-patient consumption rate per county x
-  -- specialty = internal deflated hours over total panel patients
   SELECT pd.prvdr_county, pd.prvdr_state_cd, pd.specialty_ctg_cd,
          SAFE_DIVIDE(SUM(ph.defl_hrs), SUM(pp.panel_tot)) AS ret_hrs
   FROM prov_dim pd
@@ -217,18 +218,19 @@ ret_rate_overall AS (
     AND COALESCE(ph.prvdr_county, '(NULL)') = COALESCE(pp.prvdr_county, '(NULL)')
 ),
 cells AS (
-  -- demand joins providers via cap_provider_year: SPECIALTY MUST MATCH (A8)
   SELECT
     l.mbr_county_cd, l.mbr_state_cd, l.specialty_ctg_cd, l.segment_cd,
     l.rem_growth, l.facility_absorbed,
     pd.pid, pd.npi, pd.epdb_dw_prvdr_id, pd.prvdr_county, pd.prvdr_state_cd,
-    pd.absorbing_hrs,
-    m.panel_cnt, m.cell_cap_scaled_cnt, m.closed_door_flag, m.signal_src_cd,
-    STARTS_WITH(l.segment_cd, 'NEW') AS is_new_seg,
-    IF(STARTS_WITH(l.segment_cd, 'NEW'),
+    COALESCE(pd.absorbing_hrs, 0)      AS absorbing_hrs,
+    COALESCE(m.panel_cnt, 0)           AS panel_cnt,
+    COALESCE(m.cell_cap_scaled_cnt, 0) AS cell_cap_scaled_cnt,
+    m.closed_door_flag, m.signal_src_cd,
+    STARTS_WITH(l.segment_cd, 'NEW')   AS is_new_seg,
+    COALESCE(IF(STARTS_WITH(l.segment_cd, 'NEW'),
        COALESCE(bh.avg_first_yr_hrs,
                 AVG(bh.avg_first_yr_hrs) OVER (PARTITION BY l.specialty_ctg_cd)),
-       COALESCE(rr.ret_hrs, ro.ret_hrs)) AS seg_hrs
+       COALESCE(rr.ret_hrs, ro.ret_hrs)), 0) AS seg_hrs
   FROM laned l
   LEFT JOIN prov_dim pd
     ON UPPER(TRIM(COALESCE(l.dem_county_name, ''))) = UPPER(TRIM(pd.prvdr_county))
@@ -250,53 +252,52 @@ cells AS (
   CROSS JOIN ret_rate_overall ro
 ),
 
--- LANE 1: NEW_* segments - cell caps + total constraint, two passes (CD-16)
+-- LANE 1: NEW_* segments (cell caps + total constraint, two passes)
 new_p1 AS (
   SELECT *,
-    SAFE_DIVIDE(IF(closed_door_flag = 0, panel_cnt, 0),
+    COALESCE(SAFE_DIVIDE(IF(closed_door_flag = 0, panel_cnt, 0),
       SUM(IF(closed_door_flag = 0, panel_cnt, 0)) OVER (
-        PARTITION BY mbr_county_cd, mbr_state_cd, specialty_ctg_cd, segment_cd))
+        PARTITION BY mbr_county_cd, mbr_state_cd, specialty_ctg_cd, segment_cd)), 0)
       AS seg_market_share
   FROM cells WHERE is_new_seg
 ),
 new_pass AS (
   SELECT *,
-    rem_growth * COALESCE(seg_market_share, 0) AS p1,
-    LEAST(rem_growth * COALESCE(seg_market_share, 0),
-          COALESCE(cell_cap_scaled_cnt, 0))    AS placed1
+    rem_growth * seg_market_share AS p1,
+    LEAST(rem_growth * seg_market_share, cell_cap_scaled_cnt) AS placed1
   FROM new_p1
 ),
 new_pooled AS (
   SELECT *,
     p1 - placed1 AS returned_cnt,
-    COALESCE(cell_cap_scaled_cnt, 0) - placed1 AS room,
+    cell_cap_scaled_cnt - placed1 AS room,
     SUM(p1 - placed1) OVER (PARTITION BY mbr_county_cd, mbr_state_cd,
                             specialty_ctg_cd, segment_cd) AS pool,
-    SUM(COALESCE(cell_cap_scaled_cnt, 0) - placed1)
+    SUM(cell_cap_scaled_cnt - placed1)
       OVER (PARTITION BY mbr_county_cd, mbr_state_cd,
             specialty_ctg_cd, segment_cd)                 AS room_total
   FROM new_pass
 ),
 new_dealt AS (
-  SELECT *, room * LEAST(1, SAFE_DIVIDE(pool, NULLIF(room_total, 0))) AS p2
+  SELECT *,
+    COALESCE(room * LEAST(1, SAFE_DIVIDE(pool, NULLIF(room_total, 0))), 0) AS p2
   FROM new_pooled
 ),
 new_used AS (
   SELECT pid, prvdr_county,
-         SUM((placed1 + COALESCE(p2, 0)) * COALESCE(seg_hrs, 0)) AS new_used_hrs
+         SUM((placed1 + p2) * seg_hrs) AS new_used_hrs
   FROM new_dealt WHERE pid IS NOT NULL
   GROUP BY 1, 2
 ),
 
--- LANE 2: RET_* segments - no cell caps; panel share; budget = absorbing
--- hours remaining after NEW placements (CD-25)
+-- LANE 2: RET_* segments (no cell caps; panel share; remaining budget)
 ret_p1 AS (
   SELECT c.*,
-    SAFE_DIVIDE(c.panel_cnt,
+    COALESCE(SAFE_DIVIDE(c.panel_cnt,
       SUM(c.panel_cnt) OVER (PARTITION BY c.mbr_county_cd, c.mbr_state_cd,
-                             c.specialty_ctg_cd, c.segment_cd)) AS seg_market_share,
-    GREATEST(COALESCE(c.absorbing_hrs, 0) - COALESCE(nu.new_used_hrs, 0), 0)
-      AS ret_budget_hrs
+                             c.specialty_ctg_cd, c.segment_cd)), 0)
+      AS seg_market_share,
+    GREATEST(c.absorbing_hrs - COALESCE(nu.new_used_hrs, 0), 0) AS ret_budget_hrs
   FROM cells c
   LEFT JOIN new_used nu
     ON c.pid = nu.pid
@@ -305,14 +306,17 @@ ret_p1 AS (
 ),
 ret_scaled AS (
   SELECT *,
-    rem_growth * COALESCE(seg_market_share, 0) AS p1,
-    SUM(rem_growth * COALESCE(seg_market_share, 0) * COALESCE(seg_hrs, 0))
+    rem_growth * seg_market_share AS p1,
+    SUM(rem_growth * seg_market_share * seg_hrs)
       OVER (PARTITION BY pid, prvdr_county) AS demanded_hrs
   FROM ret_p1
 ),
 ret_pass AS (
+  -- fix (d): scale coalesces to 1 when demanded hours are 0/NULL (a zero
+  -- hours rate cannot bind the budget); NULL never erases demand
   SELECT *,
-    p1 * LEAST(1, SAFE_DIVIDE(ret_budget_hrs, NULLIF(demanded_hrs, 0))) AS placed1
+    p1 * COALESCE(LEAST(1, SAFE_DIVIDE(ret_budget_hrs, NULLIF(demanded_hrs, 0))), 1)
+      AS placed1
   FROM ret_scaled
 ),
 ret_pooled AS (
@@ -320,7 +324,7 @@ ret_pooled AS (
     p1 - placed1 AS returned_cnt,
     SUM(p1 - placed1) OVER (PARTITION BY mbr_county_cd, mbr_state_cd,
                             specialty_ctg_cd, segment_cd) AS pool,
-    GREATEST(ret_budget_hrs - SUM(placed1 * COALESCE(seg_hrs, 0))
+    GREATEST(ret_budget_hrs - SUM(placed1 * seg_hrs)
       OVER (PARTITION BY pid, prvdr_county), 0)           AS leftover_hrs
   FROM ret_pass
 ),
@@ -330,43 +334,38 @@ ret_cells_n AS (
   FROM ret_pooled
 ),
 ret_room AS (
-  -- leftover hours split equally across the provider's pooled cells (A7)
   SELECT *,
-    IF(pool > 0,
+    COALESCE(IF(pool > 0,
        SAFE_DIVIDE(SAFE_DIVIDE(leftover_hrs, NULLIF(n_pool_cells, 0)),
-                   NULLIF(seg_hrs, 0)), 0) AS room
+                   NULLIF(seg_hrs, 0)), 0), 0) AS room
   FROM ret_cells_n
 ),
 ret_dealt AS (
   SELECT *,
-    SUM(room) OVER (PARTITION BY mbr_county_cd, mbr_state_cd,
-                    specialty_ctg_cd, segment_cd) AS room_total,
-    room * LEAST(1, SAFE_DIVIDE(pool,
+    COALESCE(room * LEAST(1, SAFE_DIVIDE(pool,
       NULLIF(SUM(room) OVER (PARTITION BY mbr_county_cd, mbr_state_cd,
-                             specialty_ctg_cd, segment_cd), 0))) AS p2
+                             specialty_ctg_cd, segment_cd), 0))), 0) AS p2
   FROM ret_room
 ),
 
-provider_rows AS (
+alloc_rows AS (
   SELECT mbr_county_cd, mbr_state_cd, specialty_ctg_cd, segment_cd,
          npi, epdb_dw_prvdr_id, prvdr_county, prvdr_state_cd,
          CAST(NULL AS STRING) AS absorbed_by, 'NEW_INTAKE' AS fill_lane_cd,
          seg_market_share, p1 AS pass1_alloc_cnt, returned_cnt,
-         COALESCE(p2, 0) AS pass2_alloc_cnt,
-         placed1 + COALESCE(p2, 0) AS placed_cnt,
+         p2 AS pass2_alloc_cnt,
+         placed1 + p2 AS placed_cnt,
          CAST(NULL AS FLOAT64) AS unplaced_cnt, signal_src_cd
   FROM new_dealt WHERE pid IS NOT NULL
   UNION ALL
   SELECT mbr_county_cd, mbr_state_cd, specialty_ctg_cd, segment_cd,
          npi, epdb_dw_prvdr_id, prvdr_county, prvdr_state_cd,
          CAST(NULL AS STRING), 'RET_PANEL',
-         seg_market_share, p1, returned_cnt,
-         COALESCE(p2, 0),
-         placed1 + COALESCE(p2, 0),
+         seg_market_share, p1, returned_cnt, p2,
+         placed1 + p2,
          CAST(NULL AS FLOAT64), signal_src_cd
   FROM ret_dealt WHERE pid IS NOT NULL
-),
-facility_rows AS (
+  UNION ALL
   SELECT mbr_county_cd, mbr_state_cd, specialty_ctg_cd, segment_cd,
          CAST(NULL AS STRING), CAST(NULL AS STRING),
          CAST(NULL AS STRING), CAST(NULL AS STRING),
@@ -378,49 +377,37 @@ facility_rows AS (
                segment_cd, facility_absorbed FROM laned)
   WHERE facility_absorbed > 0
 ),
+placed_by_cell AS (
+  SELECT mbr_county_cd, mbr_state_cd, specialty_ctg_cd, segment_cd,
+         SUM(COALESCE(placed_cnt, 0)) AS placed_total
+  FROM alloc_rows
+  GROUP BY 1, 2, 3, 4
+),
 remainder_rows AS (
-  SELECT mbr_county_cd, mbr_state_cd, specialty_ctg_cd, segment_cd,
+  -- fix (b): one remainder row for EVERY growth cell, even with zero
+  -- provider/facility rows - conservation by construction (A9)
+  SELECT d.mbr_county_cd, d.mbr_state_cd, d.specialty_ctg_cd, d.segment_cd,
          CAST(NULL AS STRING), CAST(NULL AS STRING),
          CAST(NULL AS STRING), CAST(NULL AS STRING),
-         CAST(NULL AS STRING), 'NEW_INTAKE',
+         CAST(NULL AS STRING),
+         CASE WHEN d.segment_cd IS NULL THEN CAST(NULL AS STRING)
+              WHEN STARTS_WITH(d.segment_cd, 'NEW') THEN 'NEW_INTAKE'
+              ELSE 'RET_PANEL' END,
          CAST(NULL AS FLOAT64),
          CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64),
          CAST(NULL AS FLOAT64),
-         GREATEST(ANY_VALUE(pool) - ANY_VALUE(room_total), 0)
-           + ANY_VALUE(rem_growth) * IF(MAX(pid) IS NULL, 1, 0),
+         GREATEST(d.growth_demand - COALESCE(p.placed_total, 0), 0),
          CAST(NULL AS STRING)
-  FROM new_dealt
-  GROUP BY 1, 2, 3, 4
-  HAVING GREATEST(ANY_VALUE(pool) - ANY_VALUE(room_total), 0)
-       + ANY_VALUE(rem_growth) * IF(MAX(pid) IS NULL, 1, 0) > 0
-  UNION ALL
-  SELECT mbr_county_cd, mbr_state_cd, specialty_ctg_cd, segment_cd,
-         CAST(NULL AS STRING), CAST(NULL AS STRING),
-         CAST(NULL AS STRING), CAST(NULL AS STRING),
-         CAST(NULL AS STRING), 'RET_PANEL',
-         CAST(NULL AS FLOAT64),
-         CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64),
-         CAST(NULL AS FLOAT64),
-         GREATEST(ANY_VALUE(pool) - ANY_VALUE(room_total), 0)
-           + ANY_VALUE(rem_growth) * IF(MAX(pid) IS NULL, 1, 0),
-         CAST(NULL AS STRING)
-  FROM ret_dealt
-  GROUP BY 1, 2, 3, 4
-  HAVING GREATEST(ANY_VALUE(pool) - ANY_VALUE(room_total), 0)
-       + ANY_VALUE(rem_growth) * IF(MAX(pid) IS NULL, 1, 0) > 0
-  UNION ALL
-  SELECT mbr_county_cd, mbr_state_cd, specialty_ctg_cd, segment_cd,
-         CAST(NULL AS STRING), CAST(NULL AS STRING),
-         CAST(NULL AS STRING), CAST(NULL AS STRING),
-         CAST(NULL AS STRING), CAST(NULL AS STRING),
-         CAST(NULL AS FLOAT64),
-         CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64), CAST(NULL AS FLOAT64),
-         CAST(NULL AS FLOAT64), growth_demand, CAST(NULL AS STRING)
-  FROM `{DEM}` WHERE segment_cd IS NULL AND growth_demand > 0
+  FROM `{DEM}` d
+  LEFT JOIN placed_by_cell p
+    ON d.mbr_county_cd = p.mbr_county_cd
+    AND COALESCE(d.mbr_state_cd, '') = COALESCE(p.mbr_state_cd, '')
+    AND d.specialty_ctg_cd = p.specialty_ctg_cd
+    AND COALESCE(d.segment_cd, 'X') = COALESCE(p.segment_cd, 'X')
+  WHERE d.growth_demand > 0
 ),
 unioned AS (
-  SELECT * FROM provider_rows
-  UNION ALL SELECT * FROM facility_rows
+  SELECT * FROM alloc_rows
   UNION ALL SELECT * FROM remainder_rows
 )
 SELECT
@@ -449,7 +436,57 @@ JOIN `{DEM}` d
   AND s.specialty_ctg_cd = d.specialty_ctg_cd
   AND COALESCE(s.segment_cd, 'X') = COALESCE(d.segment_cd, 'X')
 WHERE d.growth_demand > 0
-  AND ABS(s.accounted - d.growth_demand) > 0.000001 * GREATEST(d.growth_demand, 1)
+  AND ABS(s.accounted - d.growth_demand) > 0.5
+"""
+
+_DIAG_CTES = f"""
+WITH cell AS (
+  SELECT d.mbr_county_cd, d.specialty_ctg_cd, d.segment_cd, d.growth_demand,
+         SUM(COALESCE(f.placed_cnt, 0))   AS placed,
+         SUM(COALESCE(f.unplaced_cnt, 0)) AS unplaced,
+         SUM(IF(f.absorbed_by = 'FACILITY', COALESCE(f.placed_cnt, 0), 0)) AS fac_placed,
+         COUNT(DISTINCT IF(f.seg_market_share > 0,
+               COALESCE(f.npi, f.epdb_dw_prvdr_id), NULL)) AS open_provs,
+         COUNTIF(f.absorbed_by IS NULL
+                 AND (f.npi IS NOT NULL OR f.epdb_dw_prvdr_id IS NOT NULL)
+                 AND f.placed_cnt IS NULL) AS null_placed_rows
+  FROM `{DEM}` d
+  LEFT JOIN `{OUT}` f
+    ON d.mbr_county_cd = f.mbr_county_cd
+    AND d.specialty_ctg_cd = f.specialty_ctg_cd
+    AND COALESCE(d.segment_cd, 'X') = COALESCE(f.segment_cd, 'X')
+  WHERE d.growth_demand > 0
+  GROUP BY 1, 2, 3, 4
+),
+failing AS (
+  SELECT *, placed + unplaced - growth_demand AS gap
+  FROM cell
+  WHERE ABS(placed + unplaced - growth_demand)
+        > 0.000001 * GREATEST(growth_demand, 1)
+),
+bucketed AS (
+  SELECT *,
+    CASE
+      WHEN ABS(gap) < 0.5 THEN 'a_fp_noise'
+      WHEN open_provs = 0 THEN 'b_zero_open_providers'
+      WHEN fac_placed = 0 AND placed > 0 AND unplaced = 0 THEN 'c_missing_lane_row'
+      WHEN null_placed_rows > 0 THEN 'd_null_capacity'
+      ELSE 'e_other'
+    END AS bucket
+  FROM failing
+)
+"""
+
+DIAG_BUCKETS = _DIAG_CTES + """
+SELECT bucket, COUNT(*) AS n, ROUND(SUM(ABS(gap)), 1) AS gap_volume
+FROM bucketed GROUP BY bucket ORDER BY bucket
+"""
+
+DIAG_EXAMPLES = _DIAG_CTES + """
+SELECT mbr_county_cd, specialty_ctg_cd, segment_cd,
+       ROUND(growth_demand, 2) AS growth, ROUND(placed, 2) AS placed,
+       ROUND(unplaced, 2) AS unplaced, ROUND(gap, 2) AS gap, bucket
+FROM bucketed WHERE bucket = 'e_other' LIMIT 5
 """
 
 CHECKS = {
@@ -489,11 +526,23 @@ def main():
     print(f"RUN_MODE = {RUN_MODE}")
     client = cfg.client()
     _run(client, "create cap_fill_result", DDL)
+
+    print("--- V6 diagnostic (exact-test buckets; gate itself allows 0.5) ---")
+    buckets = {}
+    for row in _run(client, "conservation diagnostic", DIAG_BUCKETS):
+        r = dict(row)
+        buckets[r["bucket"]] = r["n"]
+        print("  ", r)
+    if buckets.get("e_other", 0):
+        print("--- 5 example e_other cells ---")
+        for row in _run(client, "conservation examples", DIAG_EXAMPLES):
+            print("  ", dict(row))
+
     n_bad = list(client.query(GATE_V6).result())[0][0]
     if n_bad:
-        raise SystemExit(f"GATE FAILED (V6) -- conservation broken in {n_bad} "
-                         f"county x specialty x segment cells")
-    print("V6 gate OK (placed + facility + unplaced = growth everywhere)")
+        raise SystemExit(f"GATE FAILED (V6) -- |placed + unplaced - growth| > 0.5 "
+                         f"in {n_bad} county x specialty x segment cells")
+    print("V6 gate OK (placed + facility + unplaced = growth within 0.5 everywhere)")
     _run(client, "set conservation_ok_flag",
          f"UPDATE `{OUT}` SET conservation_ok_flag = 1 WHERE TRUE")
     for label, q in CHECKS.items():
@@ -508,27 +557,23 @@ if __name__ == "__main__":
 
 # REVIEW
 # Reviewer 1 LOGIC:
-#  - Both county roles meet ONLY here (rule 1): demand keys mbr_county_cd +
-#    mbr_state_cd, provider keys prvdr_county + prvdr_state_cd (rule 12).
-#  - CD-25 lane order enforced by construction: RET budgets subtract
-#    new_used_hrs, which is computed from the completed NEW lane. RET has
-#    no cell caps and no closed-door filter (returning patients see their
-#    existing provider); a zero-panel provider gets zero RET share
-#    naturally.
-#  - Both passes in both lanes are order-free window math; the RET
-#    equal-split of leftover hours (A7) prevents cross-segment overdraw.
-#  - CD-24 facility share has no NEW/RET axis (chronic x age only), so
-#    both lanes of a chronic-age pair face the same facility deduction.
+#  - V6 root causes closed: (1) cells whose providers all had NULL/zero
+#    shares (all closed doors, zero panels) placed nothing AND emitted no
+#    remainder - the old remainder only fired when NO provider row matched;
+#    (2) RET NULL propagation (demanded_hrs 0 -> scale NULL -> placed
+#    NULL) erased demand. Remainder is now demand-side complete (A9) and
+#    every allocation term is COALESCEd - placed_cnt cannot be NULL on
+#    provider rows.
+#  - Both county roles meet ONLY here (rule 1); rule 12 on both sides;
+#    lane order NEW -> RET enforced via new_used_hrs.
+#  - Facility peel and its lane row derive from the same laned value with
+#    the same > 0 predicate (fix c) - they cannot diverge.
 # Reviewer 2 SPEC:
-#  - Deviations = eight ASSUMPTION blocks; A6 (RET consumption rate from
-#    cap_hours_annual over panel data, per CD-25 addendum) and A8
-#    (specialty-match join, fixing a pre-CD-25 defect) are the two that
-#    most deserve run review. fill_lane_cd added per CD-25. The one
-#    deliberate CROSS JOIN is the 1-row overall-rate fallback.
-#  - Bridge applied exactly once (rule 6); leakage kept + printed;
-#    conservation_ok_flag set only after the V6 gate passes.
+#  - Deviations = nine ASSUMPTION blocks; A9 records the V6 restructure
+#    and the 0.5-patient gate tolerance (fix a, per instruction).
+#  - Bridge applied exactly once (rule 6); conservation_ok_flag set only
+#    after the gate passes.
 # Reviewer 3 EFFICIENCY:
-#  - Exactly ONE claims scan (facility share). prov_dim/matrix/bench joins
-#    are keyed (specialty+county+state / pid+county+segment / cohort);
-#    window functions carry pools and budgets - no self-joins, no CROSS
-#    JOINs. Relative cost ~ one claims scan + matrix-sized windows.
+#  - Exactly ONE claims scan (facility share). placed_by_cell aggregates
+#    alloc_rows once; remainder join is cell-keyed. The only CROSS JOIN is
+#    the 1-row overall-rate fallback. Relative cost ~ one claims scan.
