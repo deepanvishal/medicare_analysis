@@ -35,7 +35,11 @@ Run   : python expanded_scope/dc_v2/08_capacity_risk/69_fill.py
 #   NULL.
 # ASSUMPTION [5]: epdb_dw_prvdr_id, specialty_ctg_cd, signal_src_cd and
 #   fill_lane_cd carried in cap_fill_result; unbridged specialties keep
-#   cms_specialty NULL (leakage printed, per 55's handling).
+#   cms_specialty NULL (leakage printed, per 55's handling). The crosswalk
+#   is ONE-TO-MANY and is deduped to one cms_specialty per aetna_cd (MIN)
+#   before the join - a raw join fanned every row per mapping and double-
+#   counted growth (the V6 gap == growth signature). Secondary mappings
+#   are dropped from the fill output; fan size printed for review.
 # ASSUMPTION [6]: CD-25 addendum: RET counts convert to hours via a
 #   returning-patient consumption rate per county x specialty =
 #   SUM(internal defl_hrs_yr 2025) / SUM(total panel_cnt) over that county
@@ -406,6 +410,15 @@ remainder_rows AS (
     AND COALESCE(d.segment_cd, 'X') = COALESCE(p.segment_cd, 'X')
   WHERE d.growth_demand > 0
 ),
+xwalk_dedup AS (
+  -- V6 double-count root cause: the crosswalk is one-to-many (ctg -> cms);
+  -- joining it raw fanned EVERY row - provider, facility AND remainder -
+  -- once per mapping, so fanning cells accounted 2x growth. Deduped to one
+  -- deterministic cms_specialty per aetna_cd (MIN); fan size printed.
+  SELECT aetna_cd, MIN(cms_specialty) AS cms_specialty
+  FROM `{XWALK}`
+  GROUP BY aetna_cd
+),
 unioned AS (
   SELECT * FROM alloc_rows
   UNION ALL SELECT * FROM remainder_rows
@@ -420,7 +433,13 @@ SELECT
   u.placed_cnt, u.unplaced_cnt, u.signal_src_cd,
   CAST(NULL AS INT64) AS conservation_ok_flag
 FROM unioned u
-LEFT JOIN `{XWALK}` x ON u.specialty_ctg_cd = x.aetna_cd
+LEFT JOIN xwalk_dedup x ON u.specialty_ctg_cd = x.aetna_cd
+"""
+
+COMPLETENESS = f"""
+SELECT
+  (SELECT COUNT(*) FROM `{OUT}` WHERE unplaced_cnt IS NOT NULL) AS unplaced_rows,
+  (SELECT COUNT(*) FROM `{DEM}` WHERE growth_demand > 0)        AS growth_cells
 """
 
 GATE_V6 = f"""
@@ -503,6 +522,10 @@ CHECKS = {
         f"SELECT ROUND(SAFE_DIVIDE(SUM(IF(absorbed_by = 'FACILITY', placed_cnt, 0)), "
         f"SUM(COALESCE(placed_cnt, 0) + COALESCE(unplaced_cnt, 0))), 4) AS fac_share "
         f"FROM `{OUT}`",
+    "bridge fan size (aetna_cd mapping to >1 cms_specialty; deduped by MIN)":
+        f"SELECT COUNT(*) AS fanning_ctg_codes FROM ("
+        f"SELECT aetna_cd FROM `{XWALK}` GROUP BY aetna_cd "
+        f"HAVING COUNT(DISTINCT cms_specialty) > 1)",
     "specialty bridge leakage (rule 6)":
         f"SELECT COUNTIF(cms_specialty IS NULL) AS unbridged_rows, "
         f"ROUND(SUM(IF(cms_specialty IS NULL, "
@@ -538,6 +561,14 @@ def main():
         for row in _run(client, "conservation examples", DIAG_EXAMPLES):
             print("  ", dict(row))
 
+    comp = dict(list(client.query(COMPLETENESS).result())[0])
+    print(f"unplaced rows = {comp['unplaced_rows']:,}; "
+          f"distinct growth cells = {comp['growth_cells']:,}")
+    if comp["unplaced_rows"] != comp["growth_cells"]:
+        raise SystemExit(
+            "GATE FAILED -- unplaced-row count != distinct growth cells "
+            "(duplicate or missing remainder emission)")
+
     n_bad = list(client.query(GATE_V6).result())[0][0]
     if n_bad:
         raise SystemExit(f"GATE FAILED (V6) -- |placed + unplaced - growth| > 0.5 "
@@ -568,6 +599,10 @@ if __name__ == "__main__":
 #    lane order NEW -> RET enforced via new_used_hrs.
 #  - Facility peel and its lane row derive from the same laned value with
 #    the same > 0 predicate (fix c) - they cannot diverge.
+#  - Second V6 root cause closed: the one-to-many bridge join duplicated
+#    every row of fanning ctg codes (gap == growth signature); bridge now
+#    deduped (xwalk_dedup), and the completeness assert enforces exactly
+#    one unplaced row per growth cell.
 # Reviewer 2 SPEC:
 #  - Deviations = nine ASSUMPTION blocks; A9 records the V6 restructure
 #    and the 0.5-patient gate tolerance (fix a, per instruction).
