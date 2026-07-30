@@ -64,8 +64,8 @@ KEEP_COLUMNS = [
     "rndrng_prvdr_mdcr_prtcptg_ind",   # TODO VERIFY
     "tot_srvcs",                       # TODO VERIFY
     "tot_benes",                       # TODO VERIFY
-    "tot_med_srvcs",                   # TODO VERIFY
-    "tot_drug_srvcs",                  # TODO VERIFY
+    "med_tot_srvcs",                   # TODO VERIFY
+    "drug_tot_srvcs",                  # TODO VERIFY
     "tot_mdcr_pymt_amt",               # TODO VERIFY
     "bene_avg_age",                    # TODO VERIFY
     "bene_age_lt_65_cnt",              # TODO VERIFY
@@ -77,7 +77,7 @@ KEEP_COLUMNS = [
 # plus every column starting with bene_cc_ (kept dynamically; names vary by vintage)
 
 NUMERIC_BASE = [
-    "tot_srvcs", "tot_benes", "tot_med_srvcs", "tot_drug_srvcs",
+    "tot_srvcs", "tot_benes", "med_tot_srvcs", "drug_tot_srvcs",
     "tot_mdcr_pymt_amt", "bene_avg_age", "bene_age_lt_65_cnt",
     "bene_age_65_74_cnt", "bene_age_75_84_cnt", "bene_age_gt_84_cnt",
     "bene_avg_risk_scre",
@@ -92,13 +92,13 @@ SANITY_CHECKS = {
     "pct participation flag populated":
         f"SELECT ROUND(COUNTIF(TRIM(COALESCE(rndrng_prvdr_mdcr_prtcptg_ind, '')) != '') "
         f"/ COUNT(*), 4) AS pct_populated FROM `{OUT_TABLE}`",
-    "NULL rate tot_med_srvcs":
-        f"SELECT ROUND(COUNTIF(tot_med_srvcs IS NULL) / COUNT(*), 4) AS null_rate "
+    "NULL rate med_tot_srvcs":
+        f"SELECT ROUND(COUNTIF(med_tot_srvcs IS NULL) / COUNT(*), 4) AS null_rate "
         f"FROM `{OUT_TABLE}`",
     "distinct rndrng_prvdr_type count":
         f"SELECT COUNT(DISTINCT rndrng_prvdr_type) AS n_types FROM `{OUT_TABLE}`",
-    "sum(tot_med_srvcs) vs sum(tot_srvcs)":
-        f"SELECT ROUND(SUM(tot_med_srvcs), 0) AS sum_tot_med_srvcs, "
+    "sum(med_tot_srvcs) vs sum(tot_srvcs)":
+        f"SELECT ROUND(SUM(med_tot_srvcs), 0) AS sum_med_tot_srvcs, "
         f"ROUND(SUM(tot_srvcs), 0) AS sum_tot_srvcs FROM `{OUT_TABLE}`",
 }
 
