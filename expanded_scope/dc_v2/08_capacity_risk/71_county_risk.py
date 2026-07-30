@@ -90,13 +90,6 @@ cell_rollup AS (
       SUM(IF(f.absorbed_by IS NULL, COALESCE(f.placed_cnt, 0), 0))) AS borrowed_signal_pct
   FROM `{FILL}` f
   GROUP BY 1, 2, 3, 4
-),
-growth AS (
-  SELECT d.mbr_county_cd, d.mbr_state_cd, x.segment_cd, d.specialty_ctg_cd,
-         SUM(d.growth_demand) AS growth_demand
-  FROM `{DEM}` d, UNNEST([d.segment_cd]) AS x_seg
-  CROSS JOIN (SELECT x_seg AS segment_cd) x
-  GROUP BY 1, 2, 3, 4
 )
 SELECT
   c.mbr_county_cd,
@@ -174,9 +167,9 @@ if __name__ == "__main__":
 #    three lanes, which V6 (module 69 gate) proved equals dem_segment_split.
 #  - n_maxed counted at provider level within the county so a provider
 #    maxed across several segments counts once.
-#  - NOTE: the growth CTE is vestigial (superseded by the lane-sum
-#    reconstruction) and is not referenced in the final SELECT - harmless
-#    but removable; kept out of the result on purpose.
+#  - NOTE: a vestigial growth CTE was removed in run-fix review - it was
+#    unreferenced AND contained a correlated CROSS JOIN BigQuery rejects;
+#    growth is reconstructed from the three lanes (V6 guarantees identity).
 # Reviewer 2 SPEC:
 #  - Deviations = five ASSUMPTION blocks; cap_county_risk columns match the
 #    amended data model (mbr_state_cd, facility_absorbed_cnt included).
