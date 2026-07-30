@@ -2,19 +2,20 @@
 65 - provider-year consolidation + ceilings   [PYTHON runner / BigQuery DDL]
 
 WHAT  : Consolidates capped hours, FTE-days, team uplift (CD-23) and
-        ceilings into cap_provider_year. ALLOC-GRAIN RULING applied:
-        provider x county rows MERGE across both sources (one row per
-        provider x county, per the data model grain) and
-        county_alloc_share is computed over COMBINED internal + CMS
-        volumes, partition by provider only - a dual-source provider's
-        shares sum to 1 across the union of their counties. CD-22
-        individuals-only applied here: NULL/'ZZZZ' specialty excluded,
-        ind_src_cd = 'CMS_I' when the npi is in the CMS ent_cd='I' set,
-        'ASSUMED' for unmatched-npi-with-real-specialty; exclusion counts
-        printed. Ceiling_low = cohort benchmark rate x own FTE-days x
-        county share; ceiling_high = x cohort median FTE-days (CD-04).
-GRAIN : npi/epdb_dw_prvdr_id x prvdr_county + prvdr_state_cd (rule 12);
-        ONE row per provider x county across both sources
+        ceilings into cap_provider_year. ONE PERSON, ONE ID, ONE SPLIT
+        (canonical-pid ruling): canonical_pid = COALESCE(npi,
+        epdb_dw_prvdr_id); every grouping - county volumes, the county
+        share split, hours consolidation, diagnostics, the gate - runs on
+        canonical_pid, so a doctor appearing under several ids (npi +
+        multiple epdb ids, or npi-only CMS rows) merges to one person with
+        one 100% county split. Multiple epdb ids keep MIN(epdb) and set
+        multi_epdb_flag = 1. county_alloc_share is computed over COMBINED
+        internal + CMS volumes (alloc-grain ruling). CD-22
+        individuals-only applied here; exclusion counts printed.
+        Ceiling_low = cohort benchmark rate x own FTE-days x county share;
+        ceiling_high = x cohort median FTE-days (CD-04).
+GRAIN : canonical_pid (npi/epdb_dw_prvdr_id) x prvdr_county +
+        prvdr_state_cd (rule 12); ONE row per person x county
 INPUTS: cap_daily_capped, cap_hours_annual, cap_observed_detail,
         cap_params, ms_ref_county (county_type = CMS 5-way band)
 OUTPUT: cap_provider_year (BigQuery table) with gates + sanity prints.
@@ -39,17 +40,19 @@ Run   : python expanded_scope/dc_v2/08_capacity_risk/65_provider_year.py
 #   epdb-only ids); CD-22 wording keeps real-specialty unmatched ids as
 #   ASSUMED individuals, so only CMS-side 'O' (already excluded in 61) and
 #   bad-specialty ids drop here.
-# ASSUMPTION [6]: ALLOC-GRAIN RULING implementation: provider x county rows
-#   merge via FULL OUTER JOIN on npi + county (NULL-safe); same county from
-#   two sources becomes one row with hours consolidated (internal capped +
-#   CMS estimated). The CMS component's FTE-days are estimated via the
-#   cohort median INTERNAL rate and top up the observed internal days;
-#   fte_days_src_cd = 'OBSERVED' when any internal days exist, else
-#   'ESTIMATED'. Cohort benchmarks use the INTERNAL-only rate
-#   (non-circular; CMS estimates never poison benchmarks). The int-only
-#   components are published as int_capped_hrs_yr / int_fte_days_yr and
-#   module 66 reads those - identical bench numbers by construction
-#   (65-66 alignment ruling).
+# ASSUMPTION [6]: rulings implementation. Canonical-pid: all grouping keys
+#   are COALESCE(npi, epdb_dw_prvdr_id); a person's multiple epdb ids merge
+#   (MIN kept, multi_epdb_flag = 1); consequence: frac_day sums across a
+#   person's ids, so a person billing under two ids on the same day can
+#   exceed 1.0 fractional day - the daily cap was applied per id-day in 64,
+#   accepted and visible in V2/V3. Alloc-grain: shares over COMBINED
+#   internal 2025 + CMS 2023 volumes per person x county, partition by
+#   person. Hours consolidate as internal capped + CMS estimated; the CMS
+#   component's FTE-days are estimated via the cohort median INTERNAL rate
+#   and top up observed days; fte_days_src_cd = 'OBSERVED' when any
+#   internal days exist. Cohort benchmarks use the INTERNAL-only rate,
+#   published as int_capped_hrs_yr / int_fte_days_yr for module 66
+#   (identical bench numbers by construction).
 
 import os
 import sys
@@ -94,9 +97,11 @@ CREATE OR REPLACE TABLE `{OUT}`
 OPTIONS (labels=[("owner", "deepan_thulasi_aetna_com")])
 AS
 WITH internal_cty AS (
+  -- canonical-pid ruling: group by person x county; multiple epdb ids for
+  -- one npi collapse here
   SELECT
-    npi, epdb_dw_prvdr_id,
     COALESCE(npi, epdb_dw_prvdr_id)         AS pid,
+    MAX(npi)                                AS npi,
     prvdr_county, prvdr_state_cd,
     SUM(capped_hrs)                         AS int_capped_hrs,
     SUM(frac_day)                           AS int_fte_days,
@@ -104,7 +109,15 @@ WITH internal_cty AS (
     SUM(impossible_day_flag)                AS impossible_day_cnt
   FROM `{CAPPED}`
   WHERE EXTRACT(YEAR FROM svc_dt) = {INTERNAL_YR}
-  GROUP BY 1, 2, 3, 4, 5
+  GROUP BY 1, 3, 4
+),
+person_epdb AS (
+  SELECT COALESCE(npi, epdb_dw_prvdr_id)  AS pid,
+         MIN(epdb_dw_prvdr_id)            AS epdb_dw_prvdr_id,
+         COUNT(DISTINCT epdb_dw_prvdr_id) AS n_epdb
+  FROM `{CAPPED}`
+  WHERE EXTRACT(YEAR FROM svc_dt) = {INTERNAL_YR}
+  GROUP BY 1
 ),
 cms_cty AS (
   SELECT npi, npi AS pid, prvdr_county, prvdr_state_cd,
@@ -122,7 +135,7 @@ spec_pick AS (
   GROUP BY 1
 ),
 vol_combined AS (
-  -- RULING: allocation over COMBINED volumes, both sources, per pid x county
+  -- alloc-grain ruling: COMBINED volumes, both sources, per person x county
   SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid, prvdr_county,
          SUM(COALESCE(svc_cnt_yr, 0)) AS svc_cnt
   FROM `{ANNUAL}`
@@ -139,12 +152,10 @@ cms_i_set AS (
   SELECT DISTINCT npi FROM `{OBS}` WHERE src = 'CMS_FFS'
 ),
 merged AS (
-  -- RULING: ONE row per provider x county across BOTH sources; same county
-  -- from two sources merges with hours consolidated
+  -- ONE row per person x county across BOTH sources (canonical pid join)
   SELECT
     COALESCE(i.pid, c.pid)                       AS pid,
     COALESCE(i.npi, c.npi)                       AS npi,
-    i.epdb_dw_prvdr_id,
     COALESCE(i.prvdr_county, c.prvdr_county)     AS prvdr_county,
     COALESCE(i.prvdr_state_cd, c.prvdr_state_cd) AS prvdr_state_cd,
     COALESCE(i.int_capped_hrs, 0)                AS int_capped_hrs,
@@ -157,7 +168,7 @@ merged AS (
     c.pid IS NOT NULL                            AS has_cms
   FROM internal_cty i
   FULL OUTER JOIN cms_cty c
-    ON i.npi = c.npi
+    ON i.pid = c.pid
     AND COALESCE(i.prvdr_county, '(NULL)') = COALESCE(c.prvdr_county, '(NULL)')
 ),
 prov_flags AS (
@@ -170,7 +181,10 @@ prov_flags AS (
 ),
 base AS (
   SELECT
-    m.npi, m.epdb_dw_prvdr_id, m.pid, m.prvdr_county, m.prvdr_state_cd,
+    m.npi,
+    pe.epdb_dw_prvdr_id,
+    IF(COALESCE(pe.n_epdb, 0) > 1, 1, 0)         AS multi_epdb_flag,
+    m.pid, m.prvdr_county, m.prvdr_state_cd,
     COALESCE(sp.specialty_ctg_cd, m.cms_specialty_ctg_cd) AS specialty_ctg_cd,
     m.int_capped_hrs + m.cms_hrs                 AS capped_hrs_yr,
     m.int_capped_hrs, m.cms_hrs, m.int_fte_days,
@@ -185,6 +199,7 @@ base AS (
          ELSE 1.0 END                            AS county_alloc_share
   FROM merged m
   JOIN prov_flags pf ON m.pid = pf.pid
+  LEFT JOIN person_epdb pe ON m.pid = pe.pid
   LEFT JOIN spec_pick sp ON m.pid = sp.pid
   LEFT JOIN alloc al
     ON m.pid = al.pid
@@ -230,7 +245,7 @@ enriched AS (
     AND r.prvdr_state_cd = c.prvdr_state_cd
 )
 SELECT
-  npi, epdb_dw_prvdr_id, prvdr_county, prvdr_state_cd,
+  npi, epdb_dw_prvdr_id, multi_epdb_flag, prvdr_county, prvdr_state_cd,
   specialty_ctg_cd, county_band_cd,
   capped_hrs_yr,
   int_capped_hrs                                        AS int_capped_hrs_yr,
@@ -308,6 +323,11 @@ SELECT
 FROM `{OUT}`
 """
 
+DIAG_MULTI_EPDB = f"""
+SELECT COUNT(DISTINCT npi) AS npis_with_multiple_epdb
+FROM `{OUT}` WHERE multi_epdb_flag = 1
+"""
+
 CE_STOP_THRESHOLD = 50   # c + e providers above this = STOP for key-grain decision
 
 CHECKS = {
@@ -349,6 +369,10 @@ def main():
         buckets[r["bucket"]] = r["n"]
         print("  ", r)
 
+    print("--- npis that merged more than one epdb id (canonical-pid ruling) ---")
+    for row in _run(client, "multi-epdb merge count", DIAG_MULTI_EPDB):
+        print("  ", dict(row))
+
     print("--- ceiling_low_hrs in '(NULL)' county bucket "
           "(unplaceable by the fill - conservative loss, watch the size) ---")
     for row in _run(client, "null-county ceiling share", DIAG_NULL_CTY_CEILING):
@@ -386,23 +410,26 @@ if __name__ == "__main__":
 
 # REVIEW
 # Reviewer 1 LOGIC:
-#  - ALLOC-GRAIN RULING: shares come from COMBINED internal + CMS volumes,
-#    partition by pid only - a dual-source provider's shares sum to 1
-#    across the union of their counties; the old per-src NOT IN pattern is
-#    gone (FULL OUTER merge on npi + NULL-safe county replaces it).
-#  - prvdr_county always paired with prvdr_state_cd (rule 12) including the
-#    ref_county band join; both provider keys carried; provider identity =
-#    COALESCE(npi, epdb) consistently. Internal NULL-npi providers cannot
-#    merge with CMS rows (no shared key) - they stay single-source rows.
-#  - CD-23: team_uplift_hrs = sum of (defl - capped) positive slack, kept
-#    out of the benchmark basis (internal rate only, A6).
+#  - CANONICAL-PID RULING: internal_cty groups by COALESCE(npi, epdb) x
+#    county, so a doctor's multiple epdb ids collapse BEFORE the CMS merge -
+#    the CMS row can no longer fan out per epdb id, and every downstream
+#    grouping (vol_combined, alloc, prov_flags, diagnostics, gate) shares
+#    the same canonical key. One person = one row per county = one split
+#    summing to 1.
+#  - Both raw ids kept: npi + MIN(epdb) with multi_epdb_flag; npis merging
+#    more than one epdb are counted in the diagnostics.
+#  - prvdr_county always paired with prvdr_state_cd (rule 12); internal
+#    NULL-npi persons cannot merge with CMS rows (no shared key) - they
+#    stay single-source, surfaced by bucket c if mixed.
+#  - CD-23: team_uplift_hrs = (defl - capped) positive slack, out of the
+#    benchmark basis (internal rate only, A6).
 # Reviewer 2 SPEC:
-#  - Deviations = six ASSUMPTION blocks; A6 carries the ruling
-#    implementation. int_capped_hrs_yr / int_fte_days_yr published so
-#    module 66's benchmarks match this module's inline cohort by
-#    construction (alignment ruling); data model amendment pending.
+#  - Deviations = six ASSUMPTION blocks; A6 carries all three rulings
+#    (canonical pid, alloc grain, 65-66 alignment). New columns
+#    multi_epdb_flag, int_capped_hrs_yr, int_fte_days_yr - data model
+#    amendment pending.
 #  - CD-22 ind_src_cd / exclusions implemented as specified; counts printed.
 # Reviewer 3 EFFICIENCY:
-#  - Zero claims scans; reads module 62/64 outputs. FULL OUTER merge is
-#    keyed npi + county (no fan-out); window function for alloc shares;
-#    prov_flags is a provider-level aggregate. Relative cost: small.
+#  - Zero claims scans; reads module 62/64 outputs. All joins keyed on
+#    canonical pid (+county); person_epdb is a person-level aggregate; no
+#    fan-out joins remain. Relative cost: small.
