@@ -204,6 +204,7 @@ Grain: npi × prvdr_county × segment_cd (provider rows) + county remainder rows
 | prvdr_county | STRING | NULL on remainder rows |
 | prvdr_state_cd | STRING | Provider side; NULL on remainder rows; rule 12 — county never stands alone |
 | absorbed_by | STRING | 'FACILITY' on CD-24 pass-through rows; NULL on individual-provider rows |
+| fill_lane_cd | STRING | CD-25: 'NEW_INTAKE' / 'RET_PANEL' / 'FACILITY'; NULL on unsplit remainder rows |
 | signal_src_cd | STRING | Carried from cap_provider_segment for the borrowed-signal rollup (module 71) |
 | seg_market_share | FLOAT64 | Re-normalized over open doors |
 | pass1_alloc_cnt | FLOAT64 | |
