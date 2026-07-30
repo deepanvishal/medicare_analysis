@@ -102,14 +102,18 @@ spec_pick AS (
   WHERE src = 'AETNA_MA' AND period_yr = {INTERNAL_YR}
   GROUP BY 1
 ),
-alloc AS (
+alloc_base AS (
   SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid, prvdr_county,
-         SAFE_DIVIDE(SUM(svc_cnt_yr),
-           SUM(SUM(svc_cnt_yr)) OVER (PARTITION BY COALESCE(npi, epdb_dw_prvdr_id)))
-           AS county_alloc_share
+         SUM(svc_cnt_yr) AS svc_cnt
   FROM `{ANNUAL}`
   WHERE src = 'AETNA_MA' AND period_yr = {INTERNAL_YR}
   GROUP BY 1, 2
+),
+alloc AS (
+  SELECT pid, prvdr_county,
+         SAFE_DIVIDE(svc_cnt, SUM(svc_cnt) OVER (PARTITION BY pid))
+           AS county_alloc_share
+  FROM alloc_base
 ),
 prov_tot AS (
   SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid,
