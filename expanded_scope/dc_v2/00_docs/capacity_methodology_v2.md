@@ -155,6 +155,7 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 | XGBoost intake model (odds from features) | If blending too coarse for Danielle's review |
 | Finer segment axes | Data-support check after v1 |
 | Multi-year horizon | Requires share-drift modeling |
+| CRED_K final solve — module 63's rerun detection did not trigger with 66/67 present; v1 ships the seed k = 20 (impact limited to blend weight on already-thin cells, ~99% borrowed either way, tags honest) | Cleanup pass reviews 63's detection condition |
 
 ## 12. Build checklist
 
