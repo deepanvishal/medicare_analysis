@@ -2,10 +2,10 @@
 60 - load MPFS work time file + seed segments   [PYTHON loader / BigQuery load]
 
 WHAT  : Loads the CMS MPFS physician work time file (CMS-1807-F, CY2025) into
-        ref_mpfs_time and seeds the 8-row ref_segment reference. Keeps
-        blank-modifier rows only - the internal claims source has no modifier
-        column (methodology limitation 11), so modifier rows in the time file
-        are excluded at load. Then prints the module-60 GATE: internal claims
+        ref_mpfs_time and seeds the 8-row ref_segment reference. The file has
+        no modifier column; the _99xxx post-op visit columns are visit counts
+        (not minutes) and Total_time is a rollup - neither enters the minutes
+        math. Then prints the module-60 GATE: internal claims
         prcdr_cd match rate against ref_mpfs_time. Deepan reviews the gate
         report before module 61 runs. No CMS-side match query - the CMS
         by-Provider table has no procedure detail.
@@ -56,17 +56,16 @@ CLAIMS     = "anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.A870800_medicare_ana
 
 MPFS_CY = 2025
 
-# Source column names compared against the printed header after strip+lower
-# (case/spacing differences alone will not trip the guard; real absences stop
-# the run). Every entry TODO VERIFY against the printed header row.
+# Verified against the real 'Work Time' header (header-guard run). The _99xxx
+# columns are post-op visit COUNTS, not minutes, and Total_time is a rollup -
+# neither enters any minutes math. Guard still stops on any absent name.
 COLUMN_MAP = {
-    "hcpcs_cd":   "HCPCS",                              # TODO VERIFY
-    "modifier":   "MOD",                                # TODO VERIFY
-    "pre_mins":   ["PRE-SRVC EVAL TIME",                # TODO VERIFY
-                   "PRE-SRVC POSITIONING TIME",         # TODO VERIFY
-                   "PRE-SRVC SCRUB, DRESS, WAIT TIME"], # TODO VERIFY
-    "intra_mins": "INTRA-SRVC TIME",                    # TODO VERIFY
-    "post_mins":  ["IMMED POST-SRVC TIME"],             # TODO VERIFY
+    "hcpcs_cd":   "cpt_code",
+    "pre_mins":   ["Pre_Evaluation_Time",
+                   "Pre_Positioning_time",
+                   "Pre_Service_Scrub_Dress_Wait_tim"],   # truncated name in file
+    "intra_mins": "Median_Intra_Service_Time",
+    "post_mins":  ["Immediate_post_Service_time"],
 }
 
 SEGMENT_ROWS = [
@@ -177,19 +176,11 @@ def main():
         return raw[lookup[name.lower()]]
 
     hcpcs = col(COLUMN_MAP["hcpcs_cd"]).astype(str).str.strip().str.upper()
-    modifier = col(COLUMN_MAP["modifier"]).astype(str).str.strip()
-    blank_mod = modifier.isin(["", "nan", "None"]) | modifier.isna()
 
-    all_codes = set(hcpcs)
-    kept_codes = set(hcpcs[blank_mod])
-    excluded_codes = all_codes - kept_codes
-    print(f"hcpcs codes appearing ONLY with a modifier value (excluded): "
-          f"{len(excluded_codes)}")
-
-    df = pd.DataFrame({"hcpcs_cd": hcpcs})[blank_mod.values].copy()
-    pre_cols = [_safe_numeric(col(c)[blank_mod.values]) for c in COLUMN_MAP["pre_mins"]]
-    post_cols = [_safe_numeric(col(c)[blank_mod.values]) for c in COLUMN_MAP["post_mins"]]
-    df["intra_mins"] = _safe_numeric(col(COLUMN_MAP["intra_mins"])[blank_mod.values])
+    df = pd.DataFrame({"hcpcs_cd": hcpcs})
+    pre_cols = [_safe_numeric(col(c)) for c in COLUMN_MAP["pre_mins"]]
+    post_cols = [_safe_numeric(col(c)) for c in COLUMN_MAP["post_mins"]]
+    df["intra_mins"] = _safe_numeric(col(COLUMN_MAP["intra_mins"]))
     df["pre_mins"] = pd.concat(pre_cols, axis=1).sum(axis=1, min_count=1)
     df["post_mins"] = pd.concat(post_cols, axis=1).sum(axis=1, min_count=1)
     df["code_class_cd"] = df["hcpcs_cd"].map(_code_class)
@@ -197,6 +188,11 @@ def main():
     df["mpfs_cy"] = MPFS_CY
     df = df[["hcpcs_cd", "intra_mins", "pre_mins", "post_mins",
              "code_class_cd", "code_family_cd", "mpfs_cy"]]
+
+    dup = df["hcpcs_cd"].duplicated()
+    if dup.any():
+        print(f"duplicate cpt_code rows: {int(dup.sum())} - keeping first occurrence")
+        df = df[~dup].copy()
 
     seg = pd.DataFrame(
         SEGMENT_ROWS,
