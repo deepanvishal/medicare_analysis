@@ -206,9 +206,23 @@ base AS (
     AND COALESCE(m.prvdr_county, '(NULL)') = COALESCE(al.prvdr_county, '(NULL)')
   LEFT JOIN cms_i_set ci ON m.npi = ci.npi
 ),
+share_norm AS (
+  -- force-normalize shortcut: any provider still outside 1.0 +/- 0.001
+  -- after all rulings gets shares divided by their sum (totals exactly 1),
+  -- tagged alloc_forced_flag = 1 (limitation 15)
+  SELECT * REPLACE (
+      CASE WHEN share_sum IS NOT NULL AND ABS(share_sum - 1.0) > 0.001
+           THEN county_alloc_share / share_sum
+           ELSE county_alloc_share END AS county_alloc_share),
+    IF(share_sum IS NOT NULL AND ABS(share_sum - 1.0) > 0.001, 1, 0)
+      AS alloc_forced_flag
+  FROM (
+    SELECT b.*, SUM(county_alloc_share) OVER (PARTITION BY pid) AS share_sum
+    FROM base b)
+),
 kept AS (
   SELECT b.*, rc.county_type AS county_band_cd
-  FROM base b
+  FROM share_norm b
   LEFT JOIN `{CTY}` rc
     ON UPPER(TRIM(b.prvdr_county)) = UPPER(TRIM(rc.county_name))
     AND b.prvdr_state_cd = rc.state_cd
@@ -256,6 +270,7 @@ SELECT
   bench_rate * fte_days_tot_eff * county_alloc_share    AS ceiling_low_hrs,
   bench_rate * median_fte_days * county_alloc_share     AS ceiling_high_hrs,
   county_alloc_share,
+  alloc_forced_flag,
   GREATEST(bench_rate * fte_days_tot_eff * county_alloc_share
            - capped_hrs_yr, 0)                          AS spare_hrs,
   team_uplift_hrs,
