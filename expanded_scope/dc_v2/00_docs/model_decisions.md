@@ -175,6 +175,8 @@ Any future column must pass the same one-line justification or it stays out.
 
 1. SIGNED: Capacity = Aetna-realized throughput, modeled from provider
    features; sustained-peak reported alongside; p75 as baseline only (MD 02).
+   SUPERSEDED for modules 60–72 only by MD 04; remains in force for modules
+   40–57 while they feed the weave.
 2. SIGNED: County attribution rule — member county for demand, provider
    county for capacity. Mandatory check at every table-build step.
 3. DECIDED — NO (deferred): Unmet demand estimation is out of scope for MVP.
@@ -184,3 +186,19 @@ Any future column must pass the same one-line justification or it stays out.
    baseline input. If a month-level membership number turns out to be
    available, we may switch. Until then, each year's number is used for all
    its months. Logged as DD 06.
+
+---
+
+## MD 04 — Capacity redefinition for modules 60–72
+
+Status: SIGNED (Deepan, 2026-07-29). Full spec: capacity_methodology_v2.md.
+
+Capacity for modules 60–72 is a three-layer construct: (1) hours ceiling
+from claims x MPFS times, deflated, feasibility-capped, peer-benchmarked;
+(2) provider x segment matrix of new-patient intake, credibility-blended
+with cohort rates; (3) two-pass proportional fill of segment-level demand
+growth; unplaced demand = county risk. CMS FFS public data is IN scope for
+these modules (supersedes the Aetna-realized-only rule there). Aetna share
+applied once, at the end. Decisions CD-01..CD-19 and limitations live in
+the methodology doc — that doc is the single source; do not restate its
+contents here.

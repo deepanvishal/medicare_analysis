@@ -10,6 +10,22 @@ pipeline with modeled demand and capacity. 30–38 stays live only to produce
 the p75 baseline. New modules number from 40. See master_notebook_plan.md
 for the full 17-notebook map.
 
+## Capacity Risk extension (modules 60–72)
+
+A second-generation capacity pipeline lives in 08_capacity_risk/ (modules
+60–72). Its frozen specs are capacity_methodology_v2.md and
+capacity_data_model_v2.md in this folder. For any work on modules 60–72,
+read those two files after this one; they override this file where they
+conflict, for those modules only.
+
+SUPERSESSION NOTICE: The locked decision "Capacity = Aetna-realized
+throughput only. Non-Aetna volume out of scope." remains TRUE for modules
+40–57 and their outputs. It does NOT apply to modules 60–72, which use CMS
+FFS public data by design (CD-01 in capacity_methodology_v2.md). Modules
+48/51/53 stay live and feed the weave until module 72 validation (V9)
+passes; the weave capacity-feed switch will be its own future prompt — do
+not switch it without an explicit prompt.
+
 ## Rules for Claude Code (non-negotiable)
 
 1. You cannot run anything. No BigQuery execution, no reporting back of
@@ -33,6 +49,14 @@ for the full 17-notebook map.
 - mdcr_tin_par_flag is TIN-level; use mdcr_base_claim for provider-level par.
 - SAFE_CAST for CMS numeric columns (suppressed values stored as '*' or '#').
 - Excel house style follows 13_build_report.py.
+- Modules 60–72 only: NPI Type 1 (individual) providers only; Type 2 excluded.
+- Modules 60–72 carry BOTH provider keys: epdb_dw_prvdr_id and npi, joined
+  via xwalk_pin_npi_all. dc_v2 tables 40–57 key on epdb_dw_prvdr_id alone.
+- Modules 60–72: every tuning number comes from the cap_params table.
+  A literal threshold hard-coded in any 60–72 script is a defect.
+- External sources for 60–72: cms_medicare_physician_ffs_2023 (BQ, annual,
+  no service dates, suppressed cells) and the CMS MPFS Physician Time File
+  (loaded by module 60 as ref_mpfs_time).
 
 ## Locked design decisions (summary — details in the other docs)
 
@@ -74,6 +98,7 @@ dc_v2/
   05_models/                 50 forecast, 51 predictive, 52 clusters, 53 p75
   06_weave/                  54 risk, 55 weave, 56 report
   07_data_decisions/         per-decision analysis outputs (dd_01/, dd_02/...)
+  08_capacity_risk/          modules 60–72 — see capacity_methodology_v2.md
 ```
 
 ## Status discipline

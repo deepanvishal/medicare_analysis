@@ -40,6 +40,7 @@ bigquery-public-data.geo_us_boundaries.counties
 bigquery-public-data.geo_us_boundaries.zip_codes
 bigquery-public-data.census_bureau_acs.county_2020_5yr
 bigquery-public-data.census_bureau_acs.zip_codes_2018_5yr
+anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.cms_medicare_physician_ffs_2023  ← CMS FFS by NPI (annual, no dates; has rndrng_prvdr_mdcr_prtcptg_ind)
 ```
 
 ---

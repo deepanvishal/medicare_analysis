@@ -523,3 +523,26 @@ member county attribution comes from here).
 
 Decided as above. Membership is monthly-native; demand denominator and
 member-side geography both come from this source and chain.
+
+---
+
+## DD 09 — External CMS data adoption (modules 60–72)
+
+**Status:** Adopted. **Owner:** Deepan
+
+Two external sources enter the pipeline for modules 60–72 only:
+
+1. cms_medicare_physician_ffs_2023 (BigQuery). Annual grain, NPI x HCPCS.
+   No service dates — daily-grain logic runs on internal claims only; CMS
+   FTE-days are ESTIMATED and tagged fte_days_src_cd = 'ESTIMATED'.
+   Suppressed cells ('*', '#', counts under 11): SAFE_CAST to NULL, never 0.
+   Vintage 2023 combined with internal 2025 under a ratio-stability
+   assumption (CD-09 in capacity_methodology_v2.md); retest when the CMS
+   2024 file is available.
+2. CMS MPFS Physician Time File CY2025, loaded by module 60 as
+   ref_mpfs_time. Intra-service minutes only. Match key is HCPCS (never
+   ICD). Modifier -TC lines carry zero minutes; -26 full minutes.
+
+### Conclusion
+Adopted as specified; coverage measured by module 60's match-rate report
+before any downstream build.

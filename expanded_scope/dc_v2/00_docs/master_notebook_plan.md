@@ -42,7 +42,7 @@ Section total: **2 notebooks, 4–6 days**
 | # | Notebook | Does | Decision reached | Inputs needed | Effort |
 |---|---|---|---|---|---|
 | 48 | provider_history_table | Build provider x specialty_ctg_cd x month: visits delivered (PROVIDER county) + features (panel size, age/chronic mix, new %, par, tenure, geo spread, density) | None — build. Attribution check mandatory | claims, provider ref, par flags, DD 05 list, DD 01 rule | 3–4 |
-| 49 | capacity_table_qa | Same certification as 47, provider side. Cross-check: total visits here = total visits in 46 (same claims, two lenses) | Table certified; demand/capacity totals reconcile | outputs of 46, 48 | 1 |
+| 49 | capacity_table_qa — PARKED, not built | Same certification as 47, provider side. Cross-check: total visits here = total visits in 46 (same claims, two lenses) | Table certified; demand/capacity totals reconcile | outputs of 46, 48 | 1 |
 
 Section total: **2 notebooks, 4–5 days**
 
@@ -52,7 +52,7 @@ Section total: **2 notebooks, 4–5 days**
 |---|---|---|---|---|---|
 | 50 | demand_forecast_model | Forecast per county x specialty series with external inputs. Hold out last period, validate. Simple model first, heavier only if it fails | Working demand forecast + honest error numbers (MD 01 conclusion) | certified 46 | 3–5 |
 | 51 | provider_predictive_model | One feature model across all providers predicting monthly visits. Held-out validation. Serves demand-at-provider AND capacity | Working provider model + error numbers (MD 02 conclusion) | certified 48 | 3–5 |
-| 52 | cluster_average_estimates | Cluster providers (and counties) on the same features; cluster average = second estimate. Also sustained-peak measure per provider | Cluster design decisions (how many, what stat) — MD 03 | certified 46, 48 | 2–3 |
+| 52 | cluster_average_estimates — PARKED, not built | Cluster providers (and counties) on the same features; cluster average = second estimate. Also sustained-peak measure per provider | Cluster design decisions (how many, what stat) — MD 03 | certified 46, 48 | 2–3 |
 | 53 | p75_baseline_extract | Pull the current-methodology numbers from live 30–38 pipeline into dc_v2 format | None — baseline for comparison | 30–38 outputs | 1 |
 
 Section total: **4 notebooks, 9–14 days**
@@ -61,11 +61,37 @@ Section total: **4 notebooks, 9–14 days**
 
 | # | Notebook | Does | Decision reached | Inputs needed | Effort |
 |---|---|---|---|---|---|
-| 54 | cms_risk_scores | Compute risk scores straight from CMS-HCC rules on our members. No model | None — rules-based, cite the rulebook | membership, claims dx, V24 model coefficients | 2–3 |
+| 54 | cms_risk_scores — PARKED, not built | Compute risk scores straight from CMS-HCC rules on our members. No model | None — rules-based, cite the rulebook | membership, claims dx, V24 model coefficients | 2–3 |
 | 55 | weave | Bridge specialty_ctg_cd -> cms_specialty (once, here). Roll provider model to county. Three estimates side by side for D and C, gap per estimate, risk attached. County x cms_specialty x plan_type | Unmapped-specialty leakage disposition (drop vs Other) — final open DD | outputs of 50–54, 43-row crosswalk | 3–4 |
 | 56 | final_report | House-style workbook: gap tabs per estimate, drill-down, caveats stated on tabs | None — deliverable | output of 55 | 2–3 |
 
 Section total: **3 notebooks, 7–10 days**
+
+## Section G — Capacity Risk (`08_capacity_risk/`, modules 60–72)
+
+Spec: capacity_methodology_v2.md + capacity_data_model_v2.md (00_docs).
+Old capacity (48/51/53) stays live until module 72 V9 passes.
+
+| # | Script | Does | Output table | Effort |
+|---|---|---|---|---|
+| 60 | 60_load_time_file.py | Load MPFS time file + seed segments | ref_mpfs_time, ref_segment | 0.5 |
+| 61 | 61_observed.py | Observed throughput, Type 1 only, both keys | cap_observed_detail | 1 |
+| 62 | 62_hours.py | Services -> hours, deflation, fallback ladder | cap_hours_daily, cap_hours_annual | 1 |
+| 63 | 63_calibrate.py | Solve all tuning params | cap_params | 1 |
+| 64 | 64_ceiling.py | Daily cap, impossible flags, fractional days | cap_daily_capped | 0.5 |
+| 65 | 65_provider_year.py | Provider-year rollup, FTE-days, ceilings | cap_provider_year | 1 |
+| 66 | 66_cohort_bench.py | Peer benchmarks + cohort intake rates | cap_cohort_bench | 1 |
+| 67 | 67_provider_segment.py | The matrix: blending, caps, tags | cap_provider_segment | 1.5 |
+| 68 | 68_dem_segment_split.py | Demand split anchored to 50's forecast | dem_segment_split | 1 |
+| 69 | 69_fill.py | Two-pass proportional fill | cap_fill_result | 1 |
+| 70 | 70_willing.py | Aetna share applied once | cap_willing | 0.5 |
+| 71 | 71_county_risk.py | County x specialty x segment risk + rank | cap_county_risk | 0.5 |
+| 72 | 72_validate.py | V1–V10 | cap_validation | 1 |
+
+Section total: 13 scripts, ~11.5 days
+
+Order: 60 -> 61 -> 62 -> 63 -> 64 -> 65 -> 66 -> 67 (68 parallel after 63)
+-> 69 -> 70 -> 71 -> 72. Gate stops: 60 (match rate), 64 (impossible <1%).
 
 ---
 
