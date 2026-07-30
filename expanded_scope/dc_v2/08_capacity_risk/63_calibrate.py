@@ -25,7 +25,9 @@ Run   : python expanded_scope/dc_v2/08_capacity_risk/63_calibrate.py
 #   hours = DAILY_CAP_HRS (one constraint cannot identify three classes, so
 #   class RATIOS keep anchor proportions). Anchors kept verbatim when the
 #   solve is degenerate (p99.5 <= 0, lambda <= 0, or any factor outside
-#   (0, 1]) - degeneracy recorded in derivation_nt.
+#   (0, 1]) - degeneracy recorded in derivation_nt. Rerun with scale s > 1:
+#   factors move UP but never past the anchors - new = LEAST(anchor,
+#   current x s) per class (triage fix; the old guard froze stale values).
 # ASSUMPTION [2]: DAILY_CAP_HRS elbow = candidate grid 6.0-12.0 step 0.5 on
 #   the share-of-hours-trimmed curve; elbow = max second difference. CD-03
 #   fixes the bracket, not the estimator.
@@ -138,13 +140,20 @@ def solve_daily_cap(hours):
     return cap, "elbow (max 2nd diff) on trimmed-hours share, grid 6-12 x0.5 (A2, A3)"
 
 
-def solve_deflation(hours, cap_val, base_factors, basis_note):
+def solve_deflation(hours, cap_val, base_factors, basis_note, rerun=False):
     p995 = float(np.quantile(hours, 0.995)) if len(hours) else 0.0
     if p995 <= 0:
         return base_factors, f"DEGENERATE (p99.5={p995}); anchors kept (A1)"
     lam = cap_val / p995
     if lam <= 0:
         return base_factors, f"DEGENERATE (lambda={lam:.4f}); anchors kept (A1)"
+    if rerun and lam > 1:
+        solved = {c: min(ANCHORS.get(c, v), v * lam) for c, v in base_factors.items()}
+        return solved, (
+            f"rerun up-scale s={lam:.4f}, capped at anchors - first-run shrink was "
+            f"a team-billing artifact; with high-day providers excluded raw "
+            f"minutes fit the feasible day, so anchors (the cited overstatement "
+            f"correction) govern; new = LEAST(anchor, current x s) on {basis_note} (A1)")
     solved = {c: v * lam for c, v in base_factors.items()}
     if any(not (0.0 < f <= 1.0) for f in solved.values()):
         return base_factors, (
@@ -205,14 +214,17 @@ def main():
         base_factors = (dict(zip(cur["param_scope"], cur["param_val"]))
                         if len(cur) == len(ANCHORS) else dict(ANCHORS))
         basis_note = "cap_daily_capped defl_hrs, high-day providers excluded (rerun)"
+        is_rerun = True
     except Exception:
         basis = daily["defl_hrs_basis"].dropna().values
         base_factors = dict(ANCHORS)
         basis_note = f"raw x {ANCHOR_BLEND} blend, first run (A3)"
+        is_rerun = False
     print(f"deflation basis: {basis_note}")
 
     cap_val, cap_note = solve_daily_cap(daily["defl_hrs_basis"].dropna().values)
-    defl_factors, defl_note = solve_deflation(basis, cap_val, base_factors, basis_note)
+    defl_factors, defl_note = solve_deflation(basis, cap_val, base_factors, basis_note,
+                                              rerun=is_rerun)
     pctl_val, pctl_note = solve_bench_pctl(prov)
     n_val, n_note = solve_min_cohort(prov)
 
