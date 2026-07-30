@@ -218,3 +218,18 @@ code_class_cd distribution; ref_segment count (must be 8).
 
 Outputs: the .py file. Append this prompt verbatim to
 00_docs/prompt_pack_capacity_risk.md under "## Prompt M60".
+
+## Prompt M60b — table prefix rule
+
+You cannot run anything.
+
+Decision: ref_mpfs_time and ref_segment stay PREFIXED via cfg.table(), as
+module 60 built them. Make it binding:
+
+Edit capacity_data_model_v2.md — in the Cross-cutting rules section,
+append: "All cap_/ref_ tables in modules 59-72 are created and read via
+cfg.table() (house prefix). A bare table name in any 59-72 script is a
+defect."
+
+Change nothing else. Output: the edited file. Append this prompt to the
+pack under "## Prompt M60b — table prefix rule".

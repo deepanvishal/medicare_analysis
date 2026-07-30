@@ -249,6 +249,7 @@ Grain: metric_cd × scope. Long format.
 7. **Suppressed CMS values** → SAFE_CAST → NULL, never 0.
 8. **Aetna share applied only in Stage 9** — never in matrix, fill, or ceiling.
 9. Vintages carried in `period_start`; never mixed silently.
+10. All cap_/ref_ tables in modules 59-72 are created and read via cfg.table() (house prefix). A bare table name in any 59-72 script is a defect.
 
 ## Open items for confirmation
 
