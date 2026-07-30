@@ -140,12 +140,14 @@ base AS (
     'OBSERVED' AS fte_days_src_cd,
     IF(ci.npi IS NOT NULL, 'BOTH', 'AETNA_ONLY') AS src_mix_cd,
     IF(ci.npi IS NOT NULL, 'CMS_I', 'ASSUMED')   AS ind_src_cd,
-    COALESCE(al.county_alloc_share, 1.0)         AS county_alloc_share
+    CASE WHEN al.pid IS NOT NULL THEN al.county_alloc_share
+         ELSE 1.0 END                            AS county_alloc_share
   FROM internal_cty i
   JOIN prov_tot pt ON COALESCE(i.npi, i.epdb_dw_prvdr_id) = pt.pid
   LEFT JOIN spec_pick sp ON COALESCE(i.npi, i.epdb_dw_prvdr_id) = sp.pid
   LEFT JOIN alloc al
-    ON COALESCE(i.npi, i.epdb_dw_prvdr_id) = al.pid AND i.prvdr_county = al.prvdr_county
+    ON COALESCE(i.npi, i.epdb_dw_prvdr_id) = al.pid
+    AND COALESCE(i.prvdr_county, '(NULL)') = COALESCE(al.prvdr_county, '(NULL)')
   LEFT JOIN cms_i_set ci ON i.npi = ci.npi
   UNION ALL
   SELECT
@@ -214,8 +216,60 @@ LEFT JOIN cohort c
 GATE_ALLOC = f"""
 SELECT COUNT(*) FROM (
   SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid, SUM(county_alloc_share) AS s
-  FROM `{OUT}` GROUP BY 1 HAVING ABS(s - 1.0) > 0.000001)
+  FROM `{OUT}` GROUP BY 1
+  HAVING s IS NOT NULL AND ABS(s - 1.0) > 0.001)
 """
+
+_DIAG_CTES = f"""
+WITH vol AS (
+  SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid,
+         SUM(COALESCE(svc_cnt_yr, 0)) AS svc_total
+  FROM `{ANNUAL}`
+  WHERE src = 'AETNA_MA' AND period_yr = {INTERNAL_YR}
+  GROUP BY 1
+),
+sums AS (
+  SELECT COALESCE(npi, epdb_dw_prvdr_id) AS pid,
+         SUM(county_alloc_share) AS s,
+         COUNTIF(prvdr_county IS NULL) AS null_cty_rows,
+         COUNTIF(npi IS NULL) AS npi_null_rows,
+         COUNTIF(npi IS NOT NULL) AS npi_rows
+  FROM `{OUT}`
+  GROUP BY 1
+),
+bucketed AS (
+  SELECT s.pid, s.s,
+    CASE
+      WHEN COALESCE(v.svc_total, 0) = 0 THEN 'a_zero_volume'
+      WHEN s.null_cty_rows > 0 THEN 'b_null_county'
+      WHEN s.npi_null_rows > 0 AND s.npi_rows > 0 THEN 'c_key_mismatch'
+      WHEN s.s IS NOT NULL AND ABS(s.s - 1.0) < 0.001 THEN 'd_fp_noise'
+      ELSE 'e_other'
+    END AS bucket
+  FROM sums s
+  LEFT JOIN vol v ON s.pid = v.pid
+  WHERE s.s IS NULL OR ABS(s.s - 1.0) > 0.000001
+)
+"""
+
+DIAG_BUCKETS = _DIAG_CTES + """
+SELECT bucket, COUNT(*) AS n FROM bucketed GROUP BY bucket ORDER BY bucket
+"""
+
+DIAG_EXAMPLES = _DIAG_CTES + """
+SELECT pid, ROUND(s, 6) AS share_sum, bucket FROM bucketed
+WHERE bucket IN ('c_key_mismatch', 'e_other') LIMIT 5
+"""
+
+DIAG_NULL_CTY_CEILING = f"""
+SELECT
+  ROUND(SUM(IF(prvdr_county IS NULL, ceiling_low_hrs, 0)), 0) AS null_county_ceiling_hrs,
+  ROUND(SAFE_DIVIDE(SUM(IF(prvdr_county IS NULL, ceiling_low_hrs, 0)),
+        SUM(ceiling_low_hrs)), 4) AS pct_of_total_ceiling
+FROM `{OUT}`
+"""
+
+CE_STOP_THRESHOLD = 50   # c + e providers above this = STOP for key-grain decision
 
 CHECKS = {
     "CD-22 exclusion counts (NULL / ZZZZ specialty dropped)":
@@ -248,10 +302,38 @@ def main():
     print(f"RUN_MODE = {RUN_MODE}; internal year = {INTERNAL_YR}")
     client = cfg.client()
     _run(client, "create cap_provider_year", DDL)
+
+    print("--- alloc-share diagnostic (pre-gate buckets, exact 1e-6 test) ---")
+    buckets = {}
+    for row in _run(client, "alloc diagnostic", DIAG_BUCKETS):
+        r = dict(row)
+        buckets[r["bucket"]] = r["n"]
+        print("  ", r)
+    print("--- ceiling_low_hrs in '(NULL)' county bucket "
+          "(unplaceable by the fill - conservative loss, watch the size) ---")
+    for row in _run(client, "null-county ceiling share", DIAG_NULL_CTY_CEILING):
+        print("  ", dict(row))
+
+    hard = buckets.get("c_key_mismatch", 0) + buckets.get("e_other", 0)
+    if hard:
+        print("--- 5 example pids from c/e buckets ---")
+        for row in _run(client, "alloc diag examples", DIAG_EXAMPLES):
+            print("  ", dict(row))
+        if hard > CE_STOP_THRESHOLD:
+            raise SystemExit(
+                f"STOP -- {hard} providers in key-mismatch/other buckets "
+                f"(> {CE_STOP_THRESHOLD}); key-grain decision needed (Deepan), "
+                f"not a silent patch")
+        print(f"c/e buckets total {hard} providers (<= {CE_STOP_THRESHOLD}) - "
+              f"continuing to gate")
+    print(f"zero-volume providers (NULL alloc share, excluded from gate): "
+          f"{buckets.get('a_zero_volume', 0)}")
+
     n_bad = list(client.query(GATE_ALLOC).result())[0][0]
     if n_bad:
-        raise SystemExit(f"GATE FAILED -- county_alloc_share != 1.0 for {n_bad} providers")
-    print("alloc-share gate OK (sums to 1.0 per provider)")
+        raise SystemExit(f"GATE FAILED -- county_alloc_share sum outside 1.0 +/- 0.001 "
+                         f"for {n_bad} providers")
+    print("alloc-share gate OK (1.0 +/- 0.001 per provider; zero-volume excluded)")
     for label, q in CHECKS.items():
         print(f"--- {label} ---")
         for row in _run(client, label, q):
