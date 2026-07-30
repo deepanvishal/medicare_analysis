@@ -1013,9 +1013,30 @@ CAP_STATES = []
 BASE_VISITS_TOTAL = {}  # county_cd -> baseline 2025 formula visits (demand lens)
 
 if CAP_ERROR is None:
+    print(f"[county-risk] tables loaded: risk={len(CAP_RISK):,}, "
+          f"fill={len(CAP_FILL):,}, provider_year={len(CAP_PY):,}",
+          flush=True)
+
+    # baseline county demand WITHOUT county_payload (that path re-scans and
+    # name-matches the provider frame per county); one pass over each frame
+    _prev_by_cty = {}
+    for r in SICK.itertuples():
+        d = _prev_by_cty.setdefault(r.mbr_county_cd, {})
+        arr = d.setdefault(str(r.condition), [0.0] * len(BANDS))
+        if r.age_band in BANDS and pd.notna(r.prevalence):
+            arr[BANDS.index(r.age_band)] = float(r.prevalence)
+    _cal_by_cty = {}
+    for (cty, spec), v in CAL_LOOKUP.items():
+        _cal_by_cty.setdefault(cty, {})[spec] = v
     for _cty in COUNTY_STATE:
-        _p = county_payload(_cty)
-        BASE_VISITS_TOTAL[_cty] = float(sum(_p["base_demand"].values()))
+        members = [int(COUNTY_MEMBERS.get(_cty, {}).get(b, 0)) for b in BANDS]
+        demand, _, _ = compute_demand(
+            members, _prev_by_cty.get(_cty, {}),
+            OTHER_PREV.get(_cty, [0.0] * len(BANDS)),
+            _cal_by_cty.get(_cty, {}))
+        BASE_VISITS_TOTAL[_cty] = float(sum(demand.values()))
+    print(f"[county-risk] baseline demand precomputed for "
+          f"{len(BASE_VISITS_TOTAL):,} counties", flush=True)
 
     CAP_STATES = sorted(CAP_RISK["mbr_state_cd"].dropna().unique())
 
@@ -1032,13 +1053,9 @@ if CAP_ERROR is None:
     _prov_rows = CAP_FILL[CAP_FILL["absorbed_by"].isna()
                           & (CAP_FILL["npi"].notna()
                              | CAP_FILL["epdb_dw_prvdr_id"].notna())]
-    _fac_rows = CAP_FILL[CAP_FILL["absorbed_by"] == "FACILITY"]
     _rem_rows = CAP_FILL[CAP_FILL["unplaced_cnt"].notna()]
 
-    _fac_by_cell, _unp_by_cell = {}, {}
-    for r in _fac_rows.itertuples():
-        _fac_by_cell[(str(r.mbr_county_cd), str(r.specialty_ctg_cd),
-                      str(r.segment_cd))] = float(r.placed_cnt or 0)
+    _unp_by_cell = {}
     for r in _rem_rows.itertuples():
         _unp_by_cell[(str(r.mbr_county_cd), str(r.specialty_ctg_cd),
                       str(r.segment_cd))] = float(r.unplaced_cnt or 0)
@@ -1084,6 +1101,21 @@ if CAP_ERROR is None:
             agg["h"] = lst[len(lst) // 2] if lst else _h_global_med
         agg["h"] = max(agg["h"], 0.1)
 
+    # (cty, cms, seg) -> merged cell lookup, built ONCE (replaces the
+    # quadratic risk-row x cells cross-match that hung startup). Two ctg
+    # codes sharing one cms name merge their provider lists here, matching
+    # how module 71 rolls risk up to cms grain.
+    _cms_cells = {}
+    for (cty, ctg, seg), cell in _cells.items():
+        key = (cty, str(cell["cms"]) if pd.notna(cell["cms"]) else None, seg)
+        agg = _cms_cells.setdefault(key, {"providers": [], "placed_bl": 0.0,
+                                          "borrowed": 0.0, "ctg": ctg})
+        agg["providers"].extend(cell["providers"])
+        agg["placed_bl"] += cell["placed_bl"]
+        agg["borrowed"] += cell["borrowed"]
+
+    _EMPTY_CELL = {"providers": [], "placed_bl": 0.0, "borrowed": 0.0,
+                   "ctg": None}
     for r in CAP_RISK.itertuples():
         cty = str(r.mbr_county_cd)
         store = CAP_STORE.setdefault(cty, {
@@ -1093,14 +1125,8 @@ if CAP_ERROR is None:
         seg = str(r.segment_cd) if pd.notna(r.segment_cd) else None
         growth = float(r.growth_demand or 0)
         fac = float(r.facility_absorbed_cnt or 0)
-        ctg = None
-        cell_key = None
-        for (c2, sp2, sg2), cell in _cells.items():
-            if c2 == cty and sg2 == (seg or "") and cell["cms"] == r.cms_specialty:
-                ctg, cell_key = sp2, (c2, sp2, sg2)
-                break
-        cell_src = _cells.get(cell_key, {"providers": [], "placed_bl": 0.0,
-                                         "borrowed": 0.0})
+        cell_src = _cms_cells.get((cty, spec, seg)) or _EMPTY_CELL
+        ctg = cell_src["ctg"]
         store["cells"].append({
             "cms": spec, "ctg": ctg, "seg": seg,
             "growth_bl": growth,
@@ -1118,6 +1144,8 @@ if CAP_ERROR is None:
                 store["providers"][p["pid"]] = {
                     "budget": b["budget"], "util_now": b["util_now"],
                     "spec": b["spec"], "county": p["county"]}
+    print(f"[county-risk] precompute done: {len(CAP_STORE):,} counties in "
+          f"store", flush=True)
 
 
 def _seg_scale(seg, bands):
@@ -1889,4 +1917,5 @@ if CAP_ERROR is None:
 
 
 if __name__ == "__main__":
+    print("[startup] starting server on :8051", flush=True)
     app.run(host="0.0.0.0", port=8051, debug=False)
