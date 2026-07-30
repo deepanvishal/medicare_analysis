@@ -168,19 +168,31 @@ WHERE a.src = 'AETNA_MA' AND COALESCE(a.npi, '') = s.n
   AND a.prvdr_county = s.prvdr_county AND a.period_yr = s.yr
 """
 
-UPDATE_ANNUAL_CMS = f"""
-UPDATE `{ANNUAL}` a
-SET defl_hrs_yr = a.raw_hrs_yr * COALESCE(r.own_ratio, r2.coh_ratio, r3.glob_ratio)
-FROM (SELECT npi, SAFE_DIVIDE(SUM(defl_hrs), SUM(raw_hrs)) AS own_ratio
-      FROM `{CAPPED}` WHERE npi IS NOT NULL GROUP BY npi) r
-FULL JOIN (SELECT 1 AS one) dummy ON TRUE
-LEFT JOIN (SELECT a2.specialty_ctg_cd, a2.prvdr_state_cd,
-                  SAFE_DIVIDE(SUM(a2.defl_hrs_yr), SUM(a2.raw_hrs_yr)) AS coh_ratio
-           FROM `{ANNUAL}` a2 WHERE a2.src = 'AETNA_MA' GROUP BY 1, 2) r2
-  ON a.specialty_ctg_cd = r2.specialty_ctg_cd AND a.prvdr_state_cd = r2.prvdr_state_cd
-LEFT JOIN (SELECT SAFE_DIVIDE(SUM(defl_hrs), SUM(raw_hrs)) AS glob_ratio
-           FROM `{CAPPED}`) r3 ON TRUE
-WHERE a.src = 'CMS_FFS' AND a.npi = r.npi
+MERGE_ANNUAL_CMS = f"""
+MERGE `{ANNUAL}` a
+USING (
+  SELECT
+    t.npi, t.prvdr_county, t.period_yr,
+    t.raw_hrs_yr * COALESCE(own.own_ratio, coh.coh_ratio, glob.glob_ratio)
+      AS defl_new
+  FROM `{ANNUAL}` t
+  LEFT JOIN (SELECT npi, SAFE_DIVIDE(SUM(defl_hrs), SUM(raw_hrs)) AS own_ratio
+             FROM `{CAPPED}` WHERE npi IS NOT NULL GROUP BY npi) own
+    ON t.npi = own.npi
+  LEFT JOIN (SELECT specialty_ctg_cd, prvdr_state_cd,
+                    SAFE_DIVIDE(SUM(defl_hrs_yr), SUM(raw_hrs_yr)) AS coh_ratio
+             FROM `{ANNUAL}` WHERE src = 'AETNA_MA' GROUP BY 1, 2) coh
+    ON t.specialty_ctg_cd = coh.specialty_ctg_cd
+    AND t.prvdr_state_cd = coh.prvdr_state_cd
+  CROSS JOIN (SELECT SAFE_DIVIDE(SUM(defl_hrs), SUM(raw_hrs)) AS glob_ratio
+              FROM `{CAPPED}`) glob
+  WHERE t.src = 'CMS_FFS'
+) s
+ON a.src = 'CMS_FFS'
+  AND a.npi = s.npi
+  AND COALESCE(a.prvdr_county, '') = COALESCE(s.prvdr_county, '')
+  AND a.period_yr = s.period_yr
+WHEN MATCHED THEN UPDATE SET defl_hrs_yr = s.defl_new
 """
 
 CHECKS = {
@@ -215,7 +227,7 @@ def main():
     print(f"impossible-day gate OK ({rate})")
     _run(client, "fill cap_hours_daily.defl_hrs", UPDATE_DAILY)
     _run(client, "fill cap_hours_annual.defl_hrs_yr internal", UPDATE_ANNUAL_INTERNAL)
-    _run(client, "fill cap_hours_annual.defl_hrs_yr CMS", UPDATE_ANNUAL_CMS)
+    _run(client, "fill cap_hours_annual.defl_hrs_yr CMS", MERGE_ANNUAL_CMS)
     for label, q in CHECKS.items():
         print(f"--- {label} ---")
         for row in _run(client, label, q):
