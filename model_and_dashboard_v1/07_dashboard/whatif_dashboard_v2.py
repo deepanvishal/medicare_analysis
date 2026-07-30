@@ -11,8 +11,14 @@ clamped calibration cells, name-matched provider table, collapsible
 number tables, glossary hover text; (2) How the numbers flow - the
 six-stage plain-language flow; (3) How it works - methodology, inputs,
 assumptions, glossary; (4) Model details - coefficient explorer, fit
-quality, evidence and freshness cards. Screen text says "local care
-pattern" for the calibration factor; code and table names unchanged.
+quality, evidence and freshness cards; (5) County Risk (DASH-2) - wired
+to the capacity v2 tables (cap_county_risk + cap_fill_result +
+cap_provider_year) loaded ONCE at startup via the expanded_scope config
+pattern (adds google-cloud-bigquery as a startup dependency; tab degrades
+to an error card without it), sliders shared with the Simulator, in-python
+two-pass refill mirroring module 69 (DASH-A1 approximation). Screen text
+says "local care pattern" for the calibration factor; code and table
+names unchanged.
 Demand cascade:
   demand[spec] = local_pattern[county, spec] x (
       sum_b members_b x BASE_RATE[spec]
@@ -933,6 +939,486 @@ def simulator_tab():
     ])
 
 
+# ---------------------------------------------------------------------------
+# County Risk tab (DASH-2) - wired to the capacity v2 pipeline tables
+# (cap_county_risk + cap_fill_result + cap_provider_year), loaded ONCE at
+# startup via the expanded_scope config pattern (BigQuery; deviation from the
+# parquet-extract pattern above, per the DASH-2 prompt). Slider math re-runs
+# a simplified two-pass proportional fill IN PYTHON on precomputed arrays,
+# mirroring module 69's lane logic on small data.
+# DASH-A1 (approximation): the three source tables carry no hours-per-patient
+# rate, so patient capacity per provider = (spare + uplift hours) / h, where
+# h is calibrated per county x specialty from capacity-bound cells (budget /
+# placed where unplaced > 0), falling back to the state x specialty median,
+# then the global median.
+# ---------------------------------------------------------------------------
+
+import datetime as _dt
+import sys as _sys
+import urllib.request as _urlreq
+
+SEGMENTS_8 = ["NEW_CHR_60_74", "NEW_CHR_75P", "NEW_NONCHR_60_74",
+              "NEW_NONCHR_75P", "RET_CHR_60_74", "RET_CHR_75P",
+              "RET_NONCHR_60_74", "RET_NONCHR_75P"]
+RED_SCALE = [[0.0, "#fdecea"], [0.5, "#e4726a"], [1.0, "#7f1d1d"]]
+UNATTRIBUTED = "Unattributed"
+
+
+def _find_cfg():
+    probe = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(6):
+        cand = os.path.join(probe, "expanded_scope")
+        if os.path.isfile(os.path.join(cand, "config.py")):
+            return cand
+        probe = os.path.dirname(probe)
+    raise FileNotFoundError("expanded_scope/config.py not found")
+
+
+def _load_cap_tables():
+    try:
+        _sys.path.insert(0, _find_cfg())
+        import config as _cfg
+        client = _cfg.client()
+        risk = client.query(
+            f"SELECT * FROM `{_cfg.table('cap_county_risk')}`"
+        ).result().to_dataframe()
+        fill = client.query(
+            f"SELECT mbr_county_cd, mbr_state_cd, specialty_ctg_cd, "
+            f"cms_specialty, segment_cd, npi, epdb_dw_prvdr_id, prvdr_county, "
+            f"fill_lane_cd, absorbed_by, seg_market_share, placed_cnt, "
+            f"unplaced_cnt, signal_src_cd "
+            f"FROM `{_cfg.table('cap_fill_result')}`"
+        ).result().to_dataframe()
+        py = client.query(
+            f"SELECT npi, epdb_dw_prvdr_id, prvdr_county, prvdr_state_cd, "
+            f"specialty_ctg_cd, capped_hrs_yr, ceiling_low_hrs, spare_hrs, "
+            f"team_uplift_hrs, util_ratio "
+            f"FROM `{_cfg.table('cap_provider_year')}`"
+        ).result().to_dataframe()
+        return risk, fill, py, None
+    except Exception as exc:                       # dashboard must still boot
+        return None, None, None, str(exc)
+
+
+CAP_RISK, CAP_FILL, CAP_PY, CAP_ERROR = _load_cap_tables()
+CAP_LOADED_DATE = _dt.date.today().isoformat()
+
+
+def _pid(row_npi, row_epdb):
+    return str(row_npi) if pd.notna(row_npi) and str(row_npi) else str(row_epdb)
+
+
+CAP_STORE = {}          # county_cd -> precomputed cell/provider arrays
+CAP_STATES = []
+BASE_VISITS_TOTAL = {}  # county_cd -> baseline 2025 formula visits (demand lens)
+
+if CAP_ERROR is None:
+    for _cty in COUNTY_STATE:
+        _p = county_payload(_cty)
+        BASE_VISITS_TOTAL[_cty] = float(sum(_p["base_demand"].values()))
+
+    CAP_STATES = sorted(CAP_RISK["mbr_state_cd"].dropna().unique())
+
+    _budget = {}
+    for r in CAP_PY.itertuples():
+        key = (_pid(r.npi, r.epdb_dw_prvdr_id), str(r.prvdr_county))
+        _budget[key] = {
+            "budget": float(r.spare_hrs or 0) + float(r.team_uplift_hrs or 0),
+            "util_now": None if pd.isna(r.util_ratio) else float(r.util_ratio),
+            "spec": r.specialty_ctg_cd,
+            "state": r.prvdr_state_cd,
+        }
+
+    _prov_rows = CAP_FILL[CAP_FILL["absorbed_by"].isna()
+                          & (CAP_FILL["npi"].notna()
+                             | CAP_FILL["epdb_dw_prvdr_id"].notna())]
+    _fac_rows = CAP_FILL[CAP_FILL["absorbed_by"] == "FACILITY"]
+    _rem_rows = CAP_FILL[CAP_FILL["unplaced_cnt"].notna()]
+
+    _fac_by_cell, _unp_by_cell = {}, {}
+    for r in _fac_rows.itertuples():
+        _fac_by_cell[(str(r.mbr_county_cd), str(r.specialty_ctg_cd),
+                      str(r.segment_cd))] = float(r.placed_cnt or 0)
+    for r in _rem_rows.itertuples():
+        _unp_by_cell[(str(r.mbr_county_cd), str(r.specialty_ctg_cd),
+                      str(r.segment_cd))] = float(r.unplaced_cnt or 0)
+
+    _cells = {}
+    for r in _prov_rows.itertuples():
+        ck = (str(r.mbr_county_cd), str(r.specialty_ctg_cd), str(r.segment_cd))
+        cell = _cells.setdefault(ck, {"providers": [], "placed_bl": 0.0,
+                                      "cms": r.cms_specialty,
+                                      "state": r.mbr_state_cd,
+                                      "borrowed": 0.0})
+        placed = float(r.placed_cnt or 0)
+        cell["providers"].append({
+            "pid": _pid(r.npi, r.epdb_dw_prvdr_id),
+            "county": str(r.prvdr_county) if pd.notna(r.prvdr_county) else "",
+            "share": float(r.seg_market_share or 0)})
+        cell["placed_bl"] += placed
+        if r.signal_src_cd == "BORROWED":
+            cell["borrowed"] += placed
+
+    _h_rate, _h_by_state_spec = {}, {}
+    for (cty, spec, seg), cell in _cells.items():
+        unp = _unp_by_cell.get((cty, spec, seg), 0.0)
+        key = (cty, spec)
+        agg = _h_rate.setdefault(key, {"placed": 0.0, "budget": 0.0,
+                                       "bound": False, "state": cell["state"]})
+        agg["placed"] += cell["placed_bl"]
+        agg["bound"] = agg["bound"] or unp > 0.5
+        for p in cell["providers"]:
+            b = _budget.get((p["pid"], p["county"]))
+            if b:
+                agg["budget"] += b["budget"]
+    for key, agg in _h_rate.items():
+        if agg["bound"] and agg["placed"] > 0 and agg["budget"] > 0:
+            h = agg["budget"] / agg["placed"]
+            agg["h"] = h
+            _h_by_state_spec.setdefault((agg["state"], key[1]), []).append(h)
+    _h_global = sorted(h for lst in _h_by_state_spec.values() for h in lst)
+    _h_global_med = _h_global[len(_h_global) // 2] if _h_global else 1.0
+    for key, agg in _h_rate.items():
+        if "h" not in agg:
+            lst = sorted(_h_by_state_spec.get((agg["state"], key[1]), []))
+            agg["h"] = lst[len(lst) // 2] if lst else _h_global_med
+        agg["h"] = max(agg["h"], 0.1)
+
+    for r in CAP_RISK.itertuples():
+        cty = str(r.mbr_county_cd)
+        store = CAP_STORE.setdefault(cty, {
+            "state": r.mbr_state_cd, "cells": [], "providers": {}})
+        spec = (str(r.cms_specialty) if pd.notna(r.cms_specialty)
+                else None)
+        seg = str(r.segment_cd) if pd.notna(r.segment_cd) else None
+        growth = float(r.growth_demand or 0)
+        fac = float(r.facility_absorbed_cnt or 0)
+        ctg = None
+        cell_key = None
+        for (c2, sp2, sg2), cell in _cells.items():
+            if c2 == cty and sg2 == (seg or "") and cell["cms"] == r.cms_specialty:
+                ctg, cell_key = sp2, (c2, sp2, sg2)
+                break
+        cell_src = _cells.get(cell_key, {"providers": [], "placed_bl": 0.0,
+                                         "borrowed": 0.0})
+        store["cells"].append({
+            "cms": spec, "ctg": ctg, "seg": seg,
+            "growth_bl": growth,
+            "fac_share": (fac / growth) if growth > 0 else 0.0,
+            "providers": cell_src["providers"],
+            "placed_bl": cell_src["placed_bl"],
+            "borrowed_bl": cell_src["borrowed"],
+            "unplaced_bl": float(r.unplaced_cnt or 0),
+            "h": _h_rate.get((cty, ctg), {}).get("h", _h_global_med)
+                 if ctg else _h_global_med,
+        })
+        for p in cell_src["providers"]:
+            b = _budget.get((p["pid"], p["county"]))
+            if b and p["pid"] not in store["providers"]:
+                store["providers"][p["pid"]] = {
+                    "budget": b["budget"], "util_now": b["util_now"],
+                    "spec": b["spec"], "county": p["county"]}
+
+
+def _seg_scale(seg, bands):
+    if seg is None:
+        return 0.0
+    if seg.endswith("60_74"):
+        return (bands[0] + bands[1]) / 2.0
+    return (bands[2] + bands[3]) / 2.0
+
+
+def cap_refill(county, bands):
+    """Simplified module-69 mirror: facility peel, then per county x spec
+    (NEW segments before RET) a two-pass proportional deal against provider
+    count-caps = remaining budget hours / h (DASH-A1)."""
+    store = CAP_STORE.get(county)
+    if not store:
+        return None
+    cap_rem = {pid: (p["budget"] / 1.0) for pid, p in store["providers"].items()}
+    for pid, p in store["providers"].items():
+        h = _h_global_med
+        for cell in store["cells"]:
+            if cell["ctg"] == p["spec"]:
+                h = cell["h"]
+                break
+        cap_rem[pid] = p["budget"] / max(h, 0.1)
+    cells_out = []
+    ordered = sorted(store["cells"],
+                     key=lambda c: (c["seg"] is None,
+                                    not (c["seg"] or "").startswith("NEW")))
+    for cell in ordered:
+        scale = 1.0 + _seg_scale(cell["seg"], bands) / 100.0
+        growth = cell["growth_bl"] * max(scale, 0.0)
+        fac = growth * cell["fac_share"]
+        ind = growth - fac
+        provs = [p for p in cell["providers"] if p["share"] > 0]
+        placed = 0.0
+        alloc = {}
+        if provs and ind > 0:
+            pool = 0.0
+            for p in provs:
+                p1 = ind * p["share"]
+                take = min(p1, max(cap_rem.get(p["pid"], 0.0), 0.0))
+                alloc[p["pid"]] = take
+                cap_rem[p["pid"]] = cap_rem.get(p["pid"], 0.0) - take
+                pool += p1 - take
+            room = {p["pid"]: max(cap_rem.get(p["pid"], 0.0), 0.0)
+                    for p in provs}
+            room_total = sum(room.values())
+            if pool > 0 and room_total > 0:
+                deal = min(1.0, pool / room_total)
+                for p in provs:
+                    extra = room[p["pid"]] * deal
+                    alloc[p["pid"]] = alloc.get(p["pid"], 0.0) + extra
+                    cap_rem[p["pid"]] -= extra
+                pool = max(pool - room_total, 0.0)
+            placed = sum(alloc.values())
+        unplaced = max(growth - fac - placed, 0.0)
+        cells_out.append({**cell, "growth": growth, "fac": fac,
+                          "placed": placed, "unplaced": unplaced,
+                          "alloc": alloc})
+    return {"cells": cells_out, "cap_rem": cap_rem, "store": store}
+
+
+def cap_county_rows(state, bands, sort_key, show_unattributed):
+    rows = []
+    for cty, store in CAP_STORE.items():
+        if state != "All" and store["state"] != state:
+            continue
+        result = cap_refill(cty, bands)
+        if not result:
+            continue
+        cells = result["cells"]
+        if not show_unattributed:
+            cells = [c for c in cells if c["cms"] and c["seg"]]
+        growth = sum(c["growth"] for c in cells)
+        placed = sum(c["placed"] for c in cells)
+        fac = sum(c["fac"] for c in cells)
+        unplaced = sum(c["unplaced"] for c in cells)
+        over_now = sum(1 for p in result["store"]["providers"].values()
+                       if (p["util_now"] or 0) >= 1.0)
+        over_after = sum(
+            1 for pid, p in result["store"]["providers"].items()
+            if (p["util_now"] or 0) >= 1.0 or result["cap_rem"].get(pid, 0) <= 1e-9)
+        current = BASE_VISITS_TOTAL.get(cty, 0.0)
+        rows.append({
+            "_cty": cty, "_unplaced": unplaced, "_over": over_after,
+            "county": county_label(cty),
+            "current_visits": fmt(current),
+            "visits_after_growth": fmt(current + placed + fac),
+            "unplaced_risk": fmt(unplaced),
+            "over_line_now_after": f"{over_now} / {over_after}",
+            "facility_share": (f"{fac / growth:.0%}" if growth > 0 else "-"),
+            "_unplaced_pct": (unplaced / growth) if growth > 0 else 0.0,
+        })
+    key = "_over" if sort_key == "over" else "_unplaced"
+    return sorted(rows, key=lambda r: -r[key])
+
+
+CAP_FLOW_STAGES = [
+    (1, "Observed work — every visit we can see.", ACCENT_DATA,
+     "Aetna MA claims (day grain) plus the CMS FFS public file (annual, "
+     "one row per provider) — module 61."),
+    (2, "Minutes per service.", ACCENT_DATA,
+     "The CMS physician work-time file gives intra-service minutes per "
+     "procedure code; unmatched codes get zero minutes by design — "
+     "modules 60/62."),
+    (3, "Calibration — every tuning number solved, none hard-coded.", ACCENT_MODEL,
+     "Deflation, the daily cap, benchmark percentile, cohort sizes and "
+     "the blending constant are solved and stored in one table (cap_params) "
+     "— module 63."),
+    (4, "The feasible day.", ACCENT_MODEL,
+     "Hours are deflated, capped at the calibrated daily maximum; "
+     "over-cap hours are kept separately as team uplift — module 64."),
+    (5, "Ceiling — what a full year could hold.", ACCENT_MODEL,
+     "Peer benchmark rate x the provider's own working days = ceiling; "
+     "spare = ceiling minus observed — module 65."),
+    (6, "Patient-type matrix.", ACCENT_MODEL,
+     "8 patient types (new/returning x chronic x age). Each provider's "
+     "intake per type, credibility-blended with peers; OWN vs BORROWED "
+     "tagged — modules 66/67."),
+    (7, "Two-lane fill.", NEUTRAL_BOX,
+     "Growth demand splits by patient type; facilities keep their share; "
+     "NEW patients deal against intake caps, RETURNING against remaining "
+     "room — modules 68/69."),
+    (8, "County risk — who cannot be placed.", NEUTRAL_BOX,
+     "Whatever no provider could absorb = unplaced = the risk number, by "
+     "county, specialty and patient type — modules 70/71, validated by 72."),
+]
+
+
+def flows_section():
+    demand_col = html.Div(style={"flex": "1", "minWidth": "460px"},
+                          children=[flow_tab()])
+    cap_children = [
+        html.H3("How the capacity numbers flow (v2)"),
+        html.Div("Reconstructed 8-step summary of modules 59-72 (DASH-1 "
+                 "spec pending confirmation).",
+                 style={"fontSize": "12px", "color": "#52514e",
+                        "marginBottom": "12px"}),
+    ]
+    for i, (num, title, color, source) in enumerate(CAP_FLOW_STAGES):
+        cap_children.append(stage_box(num, title, source, color))
+        if i < len(CAP_FLOW_STAGES) - 1:
+            cap_children.append(arrow())
+    cap_col = html.Div(cap_children,
+                       style={"flex": "1", "minWidth": "460px",
+                              "padding": "12px"})
+    return html.Div(style={"display": "flex", "gap": "24px",
+                           "flexWrap": "wrap"},
+                    children=[demand_col, cap_col])
+
+
+def _county_geojson():
+    d = _extract_dir()
+    path = os.path.join(d, "geojson-counties-fips.json")
+    try:
+        if not os.path.isfile(path):
+            url = ("https://raw.githubusercontent.com/plotly/datasets/"
+                   "master/geojson-counties-fips.json")
+            with _urlreq.urlopen(url, timeout=8) as resp:
+                data = resp.read()
+            with open(path, "wb") as f:
+                f.write(data)
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+COUNTY_GEOJSON = _county_geojson() if CAP_ERROR is None else None
+
+
+def cap_map_figure(rows):
+    if COUNTY_GEOJSON is None:
+        items = [(r["county"], 0.0, r["_unplaced_pct"]) for r in rows[:20]]
+        fig = go.Figure(go.Bar(
+            y=[r["county"] for r in rows[:20]],
+            x=[r["_unplaced_pct"] for r in rows[:20]],
+            orientation="h", marker_color="#b91c1c"))
+        fig.update_layout(
+            title={"text": "Unplaced % by county (map fallback - county "
+                           "geojson unavailable offline)", "font": {"size": 13}},
+            height=90 + 24 * max(len(rows[:20]), 1),
+            margin={"l": 10, "r": 10, "t": 40, "b": 20},
+            yaxis={"autorange": "reversed"},
+            plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb")
+        return fig
+    fips = [str(r["_cty"]).zfill(5) for r in rows]
+    vals = [round(r["_unplaced_pct"] * 100, 1) for r in rows]
+    fig = go.Figure(go.Choropleth(
+        geojson=COUNTY_GEOJSON, locations=fips, z=vals,
+        colorscale=RED_SCALE, zmin=0,
+        zmax=max(vals) if vals else 1,
+        marker_line_color="#ffffff", marker_line_width=0.4,
+        colorbar={"title": "unplaced %", "thickness": 12}))
+    fig.update_geos(fitbounds="locations", visible=False)
+    fig.update_layout(height=420,
+                      margin={"l": 0, "r": 0, "t": 10, "b": 0},
+                      paper_bgcolor="#fcfcfb")
+    return fig
+
+
+def county_risk_tab():
+    if CAP_ERROR is not None:
+        return html.Div(style={"padding": "24px"}, children=[
+            html.H3("County Risk"),
+            html.Div(f"Capacity v2 tables unavailable at startup: "
+                     f"{CAP_ERROR}. Start the dashboard with BigQuery access "
+                     f"(modules 59-71 must have run) to enable this tab.",
+                     style={"background": "rgba(208,59,59,0.12)",
+                            "border": "1px solid #d03b3b",
+                            "borderRadius": "10px", "padding": "14px",
+                            "maxWidth": "760px", "fontSize": "13px"}),
+        ])
+    return html.Div(children=[
+        html.Div(style={"display": "flex", "gap": "16px",
+                        "alignItems": "center", "marginBottom": "10px",
+                        "flexWrap": "wrap"},
+                 children=[
+                     html.Div(style={"minWidth": "120px"}, children=[
+                         dcc.Dropdown(id="cr-state",
+                                      options=(["All"] + list(CAP_STATES)),
+                                      value=(DEFAULT_STATE
+                                             if DEFAULT_STATE in CAP_STATES
+                                             else "All"),
+                                      clearable=False)]),
+                     dcc.RadioItems(
+                         id="cr-sort",
+                         options=[{"label": "Sort: total unplaced visits",
+                                   "value": "unplaced"},
+                                  {"label": "Sort: providers over capacity",
+                                   "value": "over"}],
+                         value="unplaced", inline=True,
+                         style={"fontSize": "13px"},
+                         inputStyle={"marginRight": "4px"},
+                         labelStyle={"marginRight": "16px"}),
+                     dcc.Checklist(
+                         id="cr-unattributed",
+                         options=[{"label": " show Unattributed rows "
+                                            "(NULL segment/specialty)",
+                                   "value": "show"}],
+                         value=[], style={"fontSize": "13px"}),
+                 ]),
+        html.Div(style={"background": "#fcfcfb",
+                        "border": "1px solid rgba(11,11,11,0.10)",
+                        "borderRadius": "10px", "padding": "10px 14px",
+                        "marginBottom": "12px"},
+                 children=[
+                     html.Div("Growth sliders (shared with the Simulator "
+                              "tab - moving either set moves both)",
+                              style={"fontSize": "12px", "fontWeight": "600",
+                                     "marginBottom": "6px"}),
+                     html.Div(style={"display": "flex", "gap": "18px",
+                                     "flexWrap": "wrap"},
+                              children=[
+                                  html.Div(style={"flex": "1",
+                                                  "minWidth": "180px"},
+                                           children=[
+                                      html.Label(f"Band {BAND_NAMES[i]} (%)",
+                                                 style={"fontSize": "12px"}),
+                                      dcc.Slider(id=f"crs-b{i}", min=-30,
+                                                 max=100, step=0.25, value=0,
+                                                 marks=slider_marks(-30, 100),
+                                                 tooltip={"placement":
+                                                          "bottom"})])
+                                  for i in range(len(BANDS))]),
+                 ]),
+        html.Div(style={"display": "flex", "gap": "16px",
+                        "alignItems": "flex-start", "flexWrap": "wrap"},
+                 children=[
+                     html.Div(style={"flex": "1.2", "minWidth": "520px"},
+                              children=[
+                                  dash_table.DataTable(
+                                      id="cr-table",
+                                      columns=[{"name": n, "id": i} for n, i in [
+                                          ("county", "county"),
+                                          ("current visits",
+                                           "current_visits"),
+                                          ("visits after growth",
+                                           "visits_after_growth"),
+                                          ("unplaced (risk)",
+                                           "unplaced_risk"),
+                                          ("providers over line now / after",
+                                           "over_line_now_after"),
+                                          ("facility share",
+                                           "facility_share")]],
+                                      row_selectable=False,
+                                      **TABLE_STYLE)]),
+                     html.Div(style={"flex": "1", "minWidth": "420px"},
+                              children=[
+                                  dcc.Graph(id="cr-map",
+                                            config={"displayModeBar": False}),
+                                  html.Div("Map is display-only; click a "
+                                           "table row for county detail.",
+                                           style={"fontSize": "11px",
+                                                  "color": "#898781"})]),
+                 ]),
+        html.Div(id="cr-detail", style={"marginTop": "14px"}),
+    ])
+
+
 app.layout = html.Div(
     style={"maxWidth": "1200px", "margin": "0 auto", "padding": "16px",
            "fontFamily": "system-ui, sans-serif"},
@@ -947,12 +1433,18 @@ app.layout = html.Div(
                         "marginBottom": "4px", "letterSpacing": "0.02em"}),
         html.Div(MANIFEST_LINE,
                  style={"fontSize": "11px", "color": "#52514e",
+                        "textAlign": "center", "marginBottom": "2px"}),
+        html.Div(f"Capacity v2 pipeline (modules 59-72), {CAP_LOADED_DATE}, "
+                 f"scenario-driven — magnitudes reflect slider settings.",
+                 style={"fontSize": "11px", "color": "#52514e",
                         "textAlign": "center", "marginBottom": "12px"}),
         dcc.Tabs(value="tab-sim", children=[
             dcc.Tab(label="Simulator", value="tab-sim",
                     children=[simulator_tab()]),
+            dcc.Tab(label="County Risk", value="tab-risk",
+                    children=[county_risk_tab()]),
             dcc.Tab(label="How the numbers flow", value="tab-flow",
-                    children=[flow_tab()]),
+                    children=[flows_section()]),
             dcc.Tab(label="How it works", value="tab-method",
                     children=[methodology_tab()]),
             dcc.Tab(label="Model details", value="tab-model",
@@ -1272,6 +1764,128 @@ def update(master, b0, b1, b2, b3, _reset_clicks, selected_specialties,
             str(n_over),
             enroll_rows, condition_rows, fig_specialty, fig_condition,
             demand_rows, provider_rows, note)
+
+
+if CAP_ERROR is None:
+
+    @app.callback(
+        [Output(f"crs-b{i}", "value") for i in range(len(BANDS))],
+        [Input(f"s-b{i}", "value") for i in range(len(BANDS))],
+        [State(f"crs-b{i}", "value") for i in range(len(BANDS))],
+        prevent_initial_call=True,
+    )
+    def sync_sliders_to_risk(*vals):
+        src = [v if v is not None else 0 for v in vals[:len(BANDS)]]
+        cur = [v if v is not None else 0 for v in vals[len(BANDS):]]
+        if src == cur:
+            raise PreventUpdate
+        return src
+
+    @app.callback(
+        [Output(f"s-b{i}", "value", allow_duplicate=True)
+         for i in range(len(BANDS))],
+        [Input(f"crs-b{i}", "value") for i in range(len(BANDS))],
+        [State(f"s-b{i}", "value") for i in range(len(BANDS))],
+        prevent_initial_call=True,
+    )
+    def sync_sliders_from_risk(*vals):
+        src = [v if v is not None else 0 for v in vals[:len(BANDS)]]
+        cur = [v if v is not None else 0 for v in vals[len(BANDS):]]
+        if src == cur:
+            raise PreventUpdate
+        return src
+
+    @app.callback(
+        Output("cr-table", "data"),
+        Output("cr-map", "figure"),
+        Output("cr-detail", "children"),
+        Input("cr-state", "value"),
+        Input("cr-sort", "value"),
+        Input("cr-unattributed", "value"),
+        [Input(f"s-b{i}", "value") for i in range(len(BANDS))],
+        Input("cr-table", "active_cell"),
+        State("cr-table", "data"),
+    )
+    def update_county_risk(state, sort_key, unattributed, b0, b1, b2, b3,
+                           active_cell, prev_data):
+        bands = [v if v is not None else 0 for v in (b0, b1, b2, b3)]
+        show_unattr = "show" in (unattributed or [])
+        rows = cap_county_rows(state or "All", bands, sort_key or "unplaced",
+                               show_unattr)
+        fig = cap_map_figure(rows)
+
+        detail = html.Div("Click a county row for detail.",
+                          style={"fontSize": "12px", "color": "#898781"})
+        source = prev_data if ctx.triggered_id == "cr-table" else rows
+        if active_cell and source and active_cell["row"] < len(source):
+            cty = source[active_cell["row"]].get("_cty")
+            result = cap_refill(cty, bands) if cty else None
+            if result:
+                seg_agg = {s: {"growth": 0.0, "unplaced": 0.0}
+                           for s in SEGMENTS_8}
+                growth_t = fac_t = placed_t = borrowed_t = placed_bl_t = 0.0
+                for c in result["cells"]:
+                    growth_t += c["growth"]
+                    fac_t += c["fac"]
+                    placed_t += c["placed"]
+                    borrowed_t += c["borrowed_bl"]
+                    placed_bl_t += c["placed_bl"]
+                    if c["seg"] in seg_agg:
+                        seg_agg[c["seg"]]["growth"] += c["growth"]
+                        seg_agg[c["seg"]]["unplaced"] += c["unplaced"]
+                seg_rows = [{"patient_type": s,
+                             "growth": fmt(seg_agg[s]["growth"]),
+                             "unplaced": fmt(seg_agg[s]["unplaced"])}
+                            for s in SEGMENTS_8]
+                top5 = sorted(result["cap_rem"].items(),
+                              key=lambda kv: -kv[1])[:5]
+                prov_rows = [{"provider": pid,
+                              "specialty": result["store"]["providers"]
+                              .get(pid, {}).get("spec", ""),
+                              "remaining_room_visits": fmt(max(room, 0))}
+                             for pid, room in top5]
+                detail = html.Div(
+                    style={"background": "#fcfcfb",
+                           "border": "1px solid rgba(11,11,11,0.10)",
+                           "borderRadius": "10px", "padding": "14px"},
+                    children=[
+                        html.H4(f"County detail: {county_label(cty)}"),
+                        html.Div(style={"display": "flex", "gap": "24px",
+                                        "flexWrap": "wrap"},
+                                 children=[
+                            html.Div(style={"flex": "1", "minWidth": "300px"},
+                                     children=[
+                                html.Div("Unplaced by patient type",
+                                         style={"fontWeight": "600",
+                                                "fontSize": "13px",
+                                                "marginBottom": "4px"}),
+                                dash_table.DataTable(
+                                    columns=[{"name": c, "id": c} for c in
+                                             ["patient_type", "growth",
+                                              "unplaced"]],
+                                    data=seg_rows, **TABLE_STYLE)]),
+                            html.Div(style={"flex": "1", "minWidth": "300px"},
+                                     children=[
+                                html.Div("Top 5 providers by remaining room",
+                                         style={"fontWeight": "600",
+                                                "fontSize": "13px",
+                                                "marginBottom": "4px"}),
+                                dash_table.DataTable(
+                                    columns=[{"name": c, "id": c} for c in
+                                             ["provider", "specialty",
+                                              "remaining_room_visits"]],
+                                    data=prov_rows, **TABLE_STYLE),
+                                html.Div(
+                                    f"Facility absorbed share: "
+                                    f"{(fac_t / growth_t) if growth_t else 0:.0%} "
+                                    f"| Borrowed-signal share of baseline "
+                                    f"placements (honesty): "
+                                    f"{(borrowed_t / placed_bl_t) if placed_bl_t else 0:.0%}",
+                                    style={"fontSize": "12px",
+                                           "marginTop": "8px"})]),
+                        ]),
+                    ])
+        return rows, fig, detail
 
 
 if __name__ == "__main__":

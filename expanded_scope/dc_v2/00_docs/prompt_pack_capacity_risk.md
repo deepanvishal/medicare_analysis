@@ -459,3 +459,39 @@ stubs, V9 name-only join with its caution note.
 
 Append to pack under "## Prompt M63-72 triage". Confirm edits, then
 Deepan begins the run streak.
+
+## Prompt DASH-2 — county risk tab
+
+You cannot run anything. Deepan runs everything.
+
+Task: extend model_and_dashboard_v1/whatif_dashboard_v2.py with a new
+"County Risk" tab wired to the new pipeline tables. Read the existing
+file's patterns first (precomputed-coefficients + light in-browser math,
+shared slider state) and mirror them exactly.
+
+TAB SPEC:
+1. State filter (AR/AZ/FL/IL/OH + All) at top; same growth sliders as the
+   master tab (shared state — moving sliders updates both tabs).
+2. County table, sorted by a toggle: total unplaced visits | count of
+   providers over capacity. Columns: county, current visits, visits after
+   growth, unplaced (risk), providers over line now / after, facility
+   share. Default filter: exclude rows with NULL segment/specialty,
+   labeled "Unattributed" and shown via a checkbox toggle.
+3. Click a county row -> detail panel: the 8 patient-type cells with
+   unplaced per cell, top 5 providers by remaining room, facility
+   absorbed share, borrowed-signal % for honesty.
+4. Choropleth-style county map colored by unplaced % (light red -> dark
+   red), same state filter; map is display-only (table rows are the click
+   target).
+5. Data source: cap_county_risk + cap_fill_result + cap_provider_year via
+   the config pattern, loaded once at startup into the precomputed store;
+   slider math re-scales growth per segment share and re-runs the simple
+   two-pass proportional fill IN PYTHON on the precomputed arrays (mirror
+   69's logic, small data, fast).
+6. Add the capacity flow chart section (8 steps, from the earlier DASH-1
+   prompt spec) beside the existing demand flow chart.
+7. Banner stays; add a line: "Capacity v2 pipeline (modules 59-72), <run
+   date>, scenario-driven — magnitudes reflect slider settings."
+
+One output: the edited whatif_dashboard_v2.py. Append this prompt to the
+pack under "## Prompt DASH-2 — county risk tab".
