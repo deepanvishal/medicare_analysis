@@ -75,7 +75,7 @@ internal_day AS (
   SELECT
     TRIM(CAST(c.epdb_dw_prvdr_id AS STRING)) AS epdb_dw_prvdr_id,
     c.specialty_ctg_cd,
-    c.prvdr_county,
+    NULLIF(TRIM(c.prvdr_county), '')         AS prvdr_county,
     UPPER(LEFT(c.prvdr_submarket, 2))        AS prvdr_state_cd,
     UPPER(TRIM(CAST(c.prcdr_cd AS STRING)))  AS hcpcs_cd,
     c.srv_start_dt                           AS period_start,
@@ -147,7 +147,8 @@ CHECKS = {
         f"SELECT ROUND(COUNTIF(npi IS NOT NULL) / COUNT(*), 4) AS pct_rows_matched, "
         f"ROUND(COUNT(DISTINCT IF(npi IS NOT NULL, epdb_dw_prvdr_id, NULL)) "
         f"/ COUNT(DISTINCT epdb_dw_prvdr_id), 4) AS pct_providers_matched, "
-        f"COUNTIF(npi IS NULL) AS npi_null_rows "
+        f"COUNTIF(npi IS NULL) AS npi_null_rows, "
+        f"COUNTIF(prvdr_county IS NULL) AS null_county_rows "
         f"FROM `{OUT}` WHERE src = 'AETNA_MA'",
     "distinct counties by src":
         f"SELECT src, COUNT(DISTINCT prvdr_county) AS n_counties, "
