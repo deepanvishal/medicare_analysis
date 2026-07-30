@@ -62,6 +62,7 @@ select
 -- claim core
 , a.srv_start_dt
 , a.pri_icd9_dx_cd
+, a.prcdr_cd
 , a.allowed_amt
 , a.business_ln_cd
 -- provider identity + geography (capacity attribution)

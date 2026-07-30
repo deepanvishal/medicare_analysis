@@ -38,3 +38,18 @@ source tables), STOP and list what you found instead of picking one.
 
 One output: the .sql file. Append this prompt verbatim to
 00_docs/prompt_pack_capacity_risk.md under "## Prompt M58".
+
+## Prompt M59 — extract rebuild (prcdr_cd)
+
+You cannot run anything. No BigQuery execution. Deepan runs everything.
+
+Open expanded_scope/test_sql.sql. In the statement that creates
+A870800_medicare_analysis_2025_claims, in the final SELECT's "-- claim
+core" section, add one line
+, a.prcdr_cd
+directly after the line
+, a.pri_icd9_dx_cd
+
+Change nothing else in the file. Deepan will run the rebuild himself.
+
+Also append to 00_docs/prompt_pack_capacity_risk.md
