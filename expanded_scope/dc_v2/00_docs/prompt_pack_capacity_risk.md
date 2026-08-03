@@ -4,12 +4,19 @@ Paste each prompt into Claude Code separately, in order. Deepan runs every
 script from the office laptop and pastes results back before the next
 prompt. Spec: capacity_methodology_v2.md + capacity_data_model_v2.md.
 
-STATUS: no build prompts applied yet. Doc-restructure prompts 1–7 applied
-[date to fill].
+STATUS (sample run complete 2026-07-30): modules 59-72 + 74a/73/74
+BUILT. 59-72 have run end-to-end in SAMPLE mode (gates green: impossible
+0.28%, V6 conservation; calibration facts in
+capacity_methodology_v2.md §14).
+74a not yet run. Queue: run 74a, then 73, then 74; then the full-data
+rerun of 59-72 + 74a and refreshed exports.
 
 RUN ORDER: 60 -> 61 -> 62 -> 63 -> 64 (GATE: impossible <1%) -> 65 -> 66
--> 67 ; 68 after 63 ; -> 69 -> 70 -> 71 -> 72.
+-> 67 ; 68 after 63 ; -> 69 -> 70 -> 71 -> 72 -> 74a (export lane) ->
+73 -> 74.
 Module 60 GATE: time-file match rate report reviewed before 61.
+Module 74a GATE: enrollment present for all 4 states; per-scenario
+conservation.
 
 Build prompts are appended below as they are written. Do not invent them.
 
@@ -541,3 +548,148 @@ Sanity prints: enrollment counts + growth rate by state; per-scenario
 growth/placed/unplaced totals; driver shares; action list counts.
 RUN_MODE per R2. One output: the script. Append to pack under
 "## Prompt M74a".
+
+## Prompt M73
+
+You cannot run anything. Deepan runs everything. Read
+capacity_methodology_v2.md, capacity_data_model_v2.md, and
+74a_measured_growth.py (its output table shapes) first.
+
+Create expanded_scope/dc_v2/08_capacity_risk/73_report_xlsx.py
+House docstring, config pattern, openpyxl. Output:
+08_capacity_risk/outputs/capacity_report.xlsx. Reads ONLY BQ tables
+(74a outputs + cap_* + dem_segment_split + cap_params); no fill
+recomputation. Every tab gets a banner row: "Frozen scenario: measured
+enrollment growth (G_BASE), run <date>. Sensitivity = G_MINUS2/G_PLUS2
+columns. Rankings do not change within this file."
+
+TABS:
+1. README — what each tab answers; growth rate per state (from
+   cap_growth_measured); vintages; limitations 1-15 verbatim from the
+   methodology doc.
+2. Demand — county x specialty: baseline visits (dem_segment_split
+   anchor), growth demand at G_BASE, after-growth total, delta %, with
+   a per-state KPI summary block at top (members 2024/2025, g, total
+   baseline, total growth).
+3. County Ranking — one row per county (G_BASE, Unattributed excluded
+   w/ footer count): state, county, growth, facility-absorbed, placed,
+   unplaced, unplaced %, rank, unplaced at G_MINUS2 and G_PLUS2,
+   dominant driver, top specialty by unplaced + its count, % chronic of
+   gap, % 75P, % new, providers open / at-capacity / zero-claim.
+4. County Deep-Dive — per county block: headline (growth -> absorbed ->
+   unplaced); driver table; specialty table sorted worst-first; 8-bucket
+   table (growth/placed/unplaced); native bar charts (specialty top-10,
+   buckets) for the TOP 30 risk counties only, tables for all; the 3
+   action lists from cap_action_lists.
+5. Specialty View — specialty x state: unplaced, counties hit, worst
+   county, chronic %, new %.
+6. Providers — provider x county from cap_provider_year + cap_willing:
+   ids, specialty, state, county, observed hrs, ceiling, spare, team
+   uplift, utilization, Aetna share, contracted / zero-claim /
+   at-capacity flags.
+7. Zero-Utilization — contracted zero-claim by county x specialty.
+8. Methodology — the demand flow (6 stages) and capacity flow (8 steps,
+   DASH-1 wording from the dashboard file) as numbered text; assumptions;
+   glossary terms from the dashboard's glossary.
+9. Data Quality — source row counts, time-match %, impossible-day %,
+   borrowed %, force-normalized count, fallback-cohort %,
+   sample/full-mode note per table.
+
+Caveats on tab surfaces. One output: the script. Append to pack under
+"## Prompt M73".
+
+## Prompt M74
+
+You cannot run anything. Deepan runs everything. Read 73_report_xlsx.py
+(same sources) and the dashboard's styling (whatif_dashboard_v2.py house
+styles) first.
+
+Create expanded_scope/dc_v2/08_capacity_risk/74_report_html.py
+Output: 08_capacity_risk/outputs/capacity_report.html — ONE self-
+contained file (plotly.js inlined, all data baked as JSON), opens by
+double-click, no server, works offline. NO map anywhere. NO sliders —
+frozen G_BASE with G_MINUS2/G_PLUS2 shown as a band note.
+
+SECTIONS (single page, sticky nav):
+1. Header — title, run date, one-line method sentence, growth rate per
+   state, the frozen-scenario banner.
+2. Demand — KPI tiles (dashboard style): members g, baseline visits,
+   growth visits, unplaced total; state filter; sortable county x
+   specialty table; bar chart of top-15 counties by growth.
+3. County Risk — sortable ranked table (same columns as Excel tab 3,
+   sort toggle unplaced # / providers at capacity); state filter;
+   Unattributed excluded with a visible toggle.
+4. County Deep-Dive — county dropdown drives: headline strip; driver
+   bars (4 causes); specialty bars worst-first; 8-bucket grouped bars
+   (growth/placed/unplaced); chronic-mix context note; the 3 action
+   lists as tables. All counties precomputed into the baked JSON.
+5. Methodology — the two flow charts rendered as styled stage boxes
+   (mirror the dashboard's), collapsible assumptions + glossary +
+   limitations 1-15.
+6. Data Quality footer — same stats as Excel tab 9.
+
+Hover values everywhere; plotly toolbar minimal. Keep total file size
+reasonable (compress JSON keys if needed). One output: the script.
+Append to pack under "## Prompt M74".
+
+## Prompt DASH-3 — remove map
+
+You cannot run anything. Edit
+model_and_dashboard_v1/07_dashboard/whatif_dashboard_v2.py: remove the
+county choropleth/map (and its geojson fetch + fallback bar) from the
+County Risk tab entirely — the ranked table is the navigation. Remove
+dead imports/helpers it orphaned. Sliders and everything else stay.
+One output: the file. Append to pack under "## Prompt DASH-3 — remove
+map".
+
+## Prompt DOCSYNC-1
+
+You cannot run anything. Apply ALL edits below in one pass; list every
+file touched at the end.
+
+FRAMING RULE for every edit: sliders/forecast growth remain the
+dashboard's interactive path; measured enrollment growth (74a) is the
+EXPORT lane for frozen reports. Nothing is demoted.
+
+1. capacity_methodology_v2.md:
+   a. New section "Export scenarios (modules 74a/73/74)": measured
+      enrollment growth per state, G_MINUS2/G_BASE/G_PLUS2, frozen
+      reports; forecast/slider path unchanged for the dashboard. Log
+      CD-26 (export lane) in the decision log.
+   b. New section "Run state & calibration results": sample-mode
+      end-to-end complete <date>; gates passed (impossible 0.28%, V6
+      conservation green); calibrated values now FACTS: daily cap 6.5,
+      deflation 0.90/0.85/0.75 (anchors, rerun-verified), BENCH_PCTL 90
+      (rank-stable 85/95), MIN_COHORT_N 50, CRED_K = seed 20 (solve
+      parked); full-data run pending.
+   c. Log missing decisions: CD-27 canonical person id (COALESCE(npi,
+      epdb), multi-epdb merge); CD-28 bridge MIN-dedup at fill output
+      (share-split parked); verify CD-25 (RET lane) exists — add if not.
+   d. Consolidate the cleanup queue into Parked items: CRED_K solve
+      wiring, maxed-metric 1% literal -> cap_params, bridge share-split,
+      CMS FTE-day estimate generosity, Unattributed labeling.
+2. capacity_data_model_v2.md: add columns int_capped_hrs_yr,
+   int_fte_days_yr (cap_provider_year), multi_epdb_flag,
+   alloc_forced_flag, fill_lane_cd (cap_fill_result), remainder-row
+   semantics note; add the five 74a tables (cap_growth_measured,
+   cap_scenario_input, cap_scenario_results w/ row_type_cd,
+   cap_county_drivers, cap_action_lists) with grains; extend the lineage
+   diagram 72 -> 74a -> 73/74.
+3. master_notebook_plan.md Section G: statuses 59-72 BUILT+RUN(sample);
+   58 OBSOLETE (superseded by direct rebuild); add rows 74a/73/74;
+   note weave switch (51/53 -> new capacity) still pending V9+full run.
+4. PLAN.md: short "Current state" paragraph (run state, export lane,
+   deliverables xlsx+html+dashboard, dashboard file at
+   07_dashboard/whatif_dashboard_v2.py port 8051 no env var needed).
+5. model_decisions.md: MD-05 "Export growth = measured enrollment rate;
+   forecast remains the interactive path" (signed Deepan, date).
+6. model_and_dashboard_v1/read.md: add v2 launch recipe (plain python,
+   port 8051, /proxy/8051/ URL, progress prints) alongside v1.
+7. Root CLAUDE.md: append the 08_capacity_risk table list (ref_ + cap_
+   + 74a tables) to the tables section; one line on the export reports.
+8. prompt_pack_capacity_risk.md: update the STATUS header (built 59-72
+   + 74a, run sample-mode through 72, 74a pending run; queue = run 74a,
+   73, 74, then full-data rerun).
+
+One output: the edited files. Append this prompt to the pack under
+"## Prompt DOCSYNC-1".

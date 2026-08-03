@@ -1,6 +1,6 @@
 # Provider Capacity & County Risk — Data Model (v2, frozen build spec)
 
-Companion to `capacity_methodology_v2.md`. 15 tables. Projects: `anbc-hcb-dev` (tables), `anbc-dev-prv-nc-ds` (billing). SAFE_CAST / SAFE_DIVIDE throughout.
+Companion to `capacity_methodology_v2.md`. 15 pipeline tables + 5 export-lane tables (§16). Projects: `anbc-hcb-dev` (tables), `anbc-dev-prv-nc-ds` (billing). SAFE_CAST / SAFE_DIVIDE throughout.
 
 ---
 
@@ -23,6 +23,12 @@ cap_params (calibration) — feeds every stage                     │   dc_v2 d
                                                     │
                                                     ▼
                                               cap_validation
+                                                    │
+              (export lane, module 74a — after 72)  ▼
+  cap_growth_measured ─► cap_scenario_input ─► cap_scenario_results
+                         ─► cap_county_drivers + cap_action_lists
+                         ─► module 73 (capacity_report.xlsx)
+                            / module 74 (capacity_report.html)
 ```
 
 **Two-path constraint:** internal claims have `svc_dt` (true daily grain); CMS PUF is annual only (FTE-days estimated, tagged). `src` carried everywhere.
@@ -125,10 +131,15 @@ Grain: npi × prvdr_county. Capacity base year = 2025; 2024 retained in cap_hour
 
 | Column | Type | Notes |
 |---|---|---|
-| npi, prvdr_county | | PK |
+| npi, prvdr_county | | PK (canonical person id = COALESCE(npi, epdb_dw_prvdr_id), CD-27) |
+| epdb_dw_prvdr_id | STRING | MIN(epdb) when a person bills under several (CD-27) |
+| multi_epdb_flag | INT64 | 1 when the canonical id merged >1 epdb id (CD-27) |
 | prvdr_state_cd | STRING | rule 12 — county never stands alone |
 | specialty_ctg_cd, county_band_cd | STRING | Band from CMS SSA file |
-| capped_hrs_yr | FLOAT64 | |
+| capped_hrs_yr | FLOAT64 | Internal capped + CMS estimated hours |
+| int_capped_hrs_yr | FLOAT64 | INTERNAL-only capped hours — module 66 benchmark basis (65/66 alignment) |
+| int_fte_days_yr | FLOAT64 | INTERNAL-only FTE-days — module 66 benchmark basis |
+| alloc_forced_flag | INT64 | 1 when county shares were force-normalized (shares ÷ sum; limitation 15) |
 | fte_days_yr | FLOAT64 | Internal Σ frac_day; CMS estimated |
 | fte_days_src_cd | STRING | 'OBSERVED'/'ESTIMATED' — must survive to outputs |
 | hrs_per_fte_day | FLOAT64 | |
@@ -214,6 +225,8 @@ Grain: npi × prvdr_county × segment_cd (provider rows) + county remainder rows
 | unplaced_cnt | FLOAT64 | Remainder rows only |
 | conservation_ok_flag | INT64 | Σ placed + unplaced = growth_demand (V6) |
 
+**Remainder-row semantics:** one remainder row is emitted for EVERY demand cell (county × specialty × segment) with growth_demand > 0 — even when no provider or facility row matched — carrying unplaced_cnt = GREATEST(growth − Σ placed, 0). Conservation holds by construction; demand can never vanish into NULL shares, closed doors, or missing lane rows. unplaced_cnt is populated ONLY on remainder rows; provider/facility lane rows carry placed volume only.
+
 ## 13. `cap_willing` — Stage 9 (module 70) (simplified)
 Grain: npi × prvdr_county.
 
@@ -257,6 +270,18 @@ Grain: metric_cd × scope. Long format.
 | pass_flag | INT64 | NULL for report-only |
 | run_ts | TIMESTAMP | |
 | note_txt | STRING | |
+
+## 16. Export-lane tables — module 74a (consumed by modules 73/74; CD-26)
+
+Built AFTER module 72; never feed back into modules 59–72. `dem_segment_split` is read, never modified.
+
+| Table | Grain | Notes |
+|---|---|---|
+| cap_growth_measured | state_cd (FL/OH/AZ/IL + 'ALL_FOOTPRINT') | members_2024, members_2025, g_state = members_2025 ÷ members_2024 − 1 (distinct members 60+, membership extract per DD-08); the ALL_FOOTPRINT row is the fallback rate for NULL-state demand |
+| cap_scenario_input | scenario_cd × mbr_county_cd + mbr_state_cd × specialty_ctg_cd × segment_cd | dem_segment_split baseline × 3 frozen scenarios; growth_demand = segment_demand × g_applied (g ± 2pts, floor 0); growth_src_cd = 'MEASURED' |
+| cap_scenario_results | row_type_cd 'CELL' = scenario × demand cell (growth_demand / facility_absorbed_cnt / placed_cnt / unplaced_cnt); 'ALLOC' = scenario × provider × segment × lane | Module 69's fill mirrored exactly per scenario (facility peel, both lanes, MIN-dedup bridge); conservation gated per scenario; ALLOC rows add placed_hrs for remaining-room math |
+| cap_county_drivers | mbr_state_cd × mbr_county_cd × cms_specialty (G_BASE) | Unplaced split by cause, priority NO_PROVIDERS / DOORS_CLOSED / AT_CAPACITY; paper_network_cnt = county-level contracted-zero-claim count (context column) |
+| cap_action_lists | list_cd × prvdr_state_cd × prvdr_county × provider (G_BASE) | TOP_ROOM (top 15 by remaining room per county), ZERO_CLAIM (all), AT_CAPACITY (all) |
 
 ---
 

@@ -202,3 +202,16 @@ these modules (supersedes the Aetna-realized-only rule there). Aetna share
 applied once, at the end. Decisions CD-01..CD-19 and limitations live in
 the methodology doc — that doc is the single source; do not restate its
 contents here.
+
+## MD 05 — Export growth = measured enrollment rate
+
+Status: SIGNED (Deepan, 2026-07-30).
+
+The frozen export reports (modules 74a/73/74) use the MEASURED enrollment
+growth rate per state — distinct enrolled members 2025 vs 2024 from the
+membership extract, never claims utilizers — at G_BASE with a +/-2pt
+sensitivity band (G_MINUS2/G_PLUS2, floor 0). The forecast remains the
+interactive path: the dashboard's sliders/forecast growth are unchanged
+and authoritative for what-if work. Measured growth exists so frozen
+reports carry a defensible, data-measured rate. Nothing is demoted.
+Details: capacity_methodology_v2.md §13 (CD-26).

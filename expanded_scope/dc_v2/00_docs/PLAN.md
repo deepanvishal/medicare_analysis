@@ -10,6 +10,22 @@ pipeline with modeled demand and capacity. 30–38 stays live only to produce
 the p75 baseline. New modules number from 40. See master_notebook_plan.md
 for the full 17-notebook map.
 
+## Current state (2026-08-03)
+
+Modules 59–72 are built and have run end-to-end in sample mode (gates
+green: impossible-day 0.28%, V6 conservation; calibrated values logged in
+capacity_methodology_v2.md §14); the full-data rerun is pending. The
+EXPORT lane (modules 74a/73/74) is built: 74a measures enrollment growth
+per state and runs three frozen scenarios (G_MINUS2/G_BASE/G_PLUS2)
+through the module-69 fill; 73 renders the Excel deliverable
+(outputs/capacity_report.xlsx) and 74 the self-contained HTML
+(outputs/capacity_report.html). Deliverables = xlsx + html + the
+dashboard. The dashboard lives at
+model_and_dashboard_v1/07_dashboard/whatif_dashboard_v2.py — plain
+python, port 8051, no env var needed (proxy prefix /proxy/8051/ is the
+default). Sliders/forecast growth remain the dashboard's interactive
+path; measured growth is the export lane only (CD-26) — nothing demoted.
+
 ## Capacity Risk extension (modules 60–72)
 
 A second-generation capacity pipeline lives in 08_capacity_risk/ (modules

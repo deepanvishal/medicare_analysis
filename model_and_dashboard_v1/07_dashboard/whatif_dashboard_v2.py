@@ -17,9 +17,10 @@ to the capacity v2 tables (cap_county_risk + cap_fill_result +
 cap_provider_year) loaded ONCE at startup via the expanded_scope config
 pattern (adds google-cloud-bigquery as a startup dependency; tab degrades
 to an error card without it), sliders shared with the Simulator, in-python
-two-pass refill mirroring module 69 (DASH-A1 approximation). Screen text
-says "local care pattern" for the calibration factor; code and table
-names unchanged.
+two-pass refill mirroring module 69 (DASH-A1 approximation); DASH-3: the
+county choropleth/map is removed - the ranked table is the navigation.
+Screen text says "local care pattern" for the calibration factor; code
+and table names unchanged.
 Demand cascade:
   demand[spec] = local_pattern[county, spec] x (
       sum_b members_b x BASE_RATE[spec]
@@ -954,12 +955,10 @@ def simulator_tab():
 
 import datetime as _dt
 import sys as _sys
-import urllib.request as _urlreq
 
 SEGMENTS_8 = ["NEW_CHR_60_74", "NEW_CHR_75P", "NEW_NONCHR_60_74",
               "NEW_NONCHR_75P", "RET_CHR_60_74", "RET_CHR_75P",
               "RET_NONCHR_60_74", "RET_NONCHR_75P"]
-RED_SCALE = [[0.0, "#fdecea"], [0.5, "#e4726a"], [1.0, "#7f1d1d"]]
 UNATTRIBUTED = "Unattributed"
 
 
@@ -1297,56 +1296,6 @@ def flows_section():
                     children=[demand_col, cap_col])
 
 
-def _county_geojson():
-    d = _extract_dir()
-    path = os.path.join(d, "geojson-counties-fips.json")
-    try:
-        if not os.path.isfile(path):
-            url = ("https://raw.githubusercontent.com/plotly/datasets/"
-                   "master/geojson-counties-fips.json")
-            with _urlreq.urlopen(url, timeout=8) as resp:
-                data = resp.read()
-            with open(path, "wb") as f:
-                f.write(data)
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-
-COUNTY_GEOJSON = _county_geojson() if CAP_ERROR is None else None
-
-
-def cap_map_figure(rows):
-    if COUNTY_GEOJSON is None:
-        items = [(r["county"], 0.0, r["_unplaced_pct"]) for r in rows[:20]]
-        fig = go.Figure(go.Bar(
-            y=[r["county"] for r in rows[:20]],
-            x=[r["_unplaced_pct"] for r in rows[:20]],
-            orientation="h", marker_color="#b91c1c"))
-        fig.update_layout(
-            title={"text": "Unplaced % by county (map fallback - county "
-                           "geojson unavailable offline)", "font": {"size": 13}},
-            height=90 + 24 * max(len(rows[:20]), 1),
-            margin={"l": 10, "r": 10, "t": 40, "b": 20},
-            yaxis={"autorange": "reversed"},
-            plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb")
-        return fig
-    fips = [str(r["_cty"]).zfill(5) for r in rows]
-    vals = [round(r["_unplaced_pct"] * 100, 1) for r in rows]
-    fig = go.Figure(go.Choropleth(
-        geojson=COUNTY_GEOJSON, locations=fips, z=vals,
-        colorscale=RED_SCALE, zmin=0,
-        zmax=max(vals) if vals else 1,
-        marker_line_color="#ffffff", marker_line_width=0.4,
-        colorbar={"title": "unplaced %", "thickness": 12}))
-    fig.update_geos(fitbounds="locations", visible=False)
-    fig.update_layout(height=420,
-                      margin={"l": 0, "r": 0, "t": 10, "b": 0},
-                      paper_bgcolor="#fcfcfb")
-    return fig
-
-
 def county_risk_tab():
     if CAP_ERROR is not None:
         return html.Div(style={"padding": "24px"}, children=[
@@ -1412,36 +1361,19 @@ def county_risk_tab():
                                                           "bottom"})])
                                   for i in range(len(BANDS))]),
                  ]),
-        html.Div(style={"display": "flex", "gap": "16px",
-                        "alignItems": "flex-start", "flexWrap": "wrap"},
-                 children=[
-                     html.Div(style={"flex": "1.2", "minWidth": "520px"},
-                              children=[
-                                  dash_table.DataTable(
-                                      id="cr-table",
-                                      columns=[{"name": n, "id": i} for n, i in [
-                                          ("county", "county"),
-                                          ("current visits",
-                                           "current_visits"),
-                                          ("visits after growth",
-                                           "visits_after_growth"),
-                                          ("unplaced (risk)",
-                                           "unplaced_risk"),
-                                          ("providers over line now / after",
-                                           "over_line_now_after"),
-                                          ("facility share",
-                                           "facility_share")]],
-                                      row_selectable=False,
-                                      **TABLE_STYLE)]),
-                     html.Div(style={"flex": "1", "minWidth": "420px"},
-                              children=[
-                                  dcc.Graph(id="cr-map",
-                                            config={"displayModeBar": False}),
-                                  html.Div("Map is display-only; click a "
-                                           "table row for county detail.",
-                                           style={"fontSize": "11px",
-                                                  "color": "#898781"})]),
-                 ]),
+        html.Div(children=[
+            dash_table.DataTable(
+                id="cr-table",
+                columns=[{"name": n, "id": i} for n, i in [
+                    ("county", "county"),
+                    ("current visits", "current_visits"),
+                    ("visits after growth", "visits_after_growth"),
+                    ("unplaced (risk)", "unplaced_risk"),
+                    ("providers over line now / after",
+                     "over_line_now_after"),
+                    ("facility share", "facility_share")]],
+                row_selectable=False,
+                **TABLE_STYLE)]),
         html.Div(id="cr-detail", style={"marginTop": "14px"}),
     ])
 
@@ -1824,7 +1756,6 @@ if CAP_ERROR is None:
 
     @app.callback(
         Output("cr-table", "data"),
-        Output("cr-map", "figure"),
         Output("cr-detail", "children"),
         Input("cr-state", "value"),
         Input("cr-sort", "value"),
@@ -1839,7 +1770,6 @@ if CAP_ERROR is None:
         show_unattr = "show" in (unattributed or [])
         rows = cap_county_rows(state or "All", bands, sort_key or "unplaced",
                                show_unattr)
-        fig = cap_map_figure(rows)
 
         detail = html.Div("Click a county row for detail.",
                           style={"fontSize": "12px", "color": "#898781"})
@@ -1912,7 +1842,7 @@ if CAP_ERROR is None:
                                            "marginTop": "8px"})]),
                         ]),
                     ])
-        return rows, fig, detail
+        return rows, detail
 
 
 if __name__ == "__main__":

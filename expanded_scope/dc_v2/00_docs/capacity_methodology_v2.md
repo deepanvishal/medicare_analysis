@@ -127,6 +127,9 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 | CD-23 | Team uplift (module 65): hours trimmed by the daily cap are summed per provider as team_uplift_hrs; absorbing capacity for the fill = personal spare + team_uplift_hrs; peer benchmarks (module 66) use CAPPED rates only — uplift never enters cohort math; no growth applied to uplift | Over-cap hours signal team billing (Stage 3 high-day flag) — real throughput that can absorb demand, but not a personal-hours rate fit for peer benchmarks. |
 | CD-24 | Facility pass-through lane in fill (module 69): facility/org IDs excluded by CD-22 keep their historical market share per county x specialty x segment; their share of growth_demand is absorbed with no ceiling and no matrix check, tagged absorbed_by='FACILITY'; only the remaining share is dealt to individual providers through the two-pass fill | Facilities absorb real demand but have no workday/ceiling construct (CD-11); dropping their share would overstate unplaced risk. |
 | CD-25 | Two-lane individual fill (module 69), NEW before RET: NEW_* segments keep cell caps + total constraint with two passes; RET_* segments have NO cell caps — RET growth distributes by each provider's current panel share of the segment, constrained only by remaining total capacity (spare + uplift after NEW placements), overflow re-split by remaining room, remainder unplaced; facility pass-through unchanged; fill_lane_cd tags rows | Intake rates count patients NEW to a provider, so RET intake is 0 by definition; cell caps would strand all RET growth as artificial unplaced risk — returning patients go to the provider they already see. |
+| CD-26 | Export lane (modules 74a/73/74): measured enrollment growth per state (distinct members 2025/2024 from the membership extract), frozen scenarios G_MINUS2/G_BASE/G_PLUS2 (±2pts, floor 0), rendered to Excel/HTML reports | Frozen deliverables need a defensible, data-measured growth rate; the forecast/slider path is unchanged and remains the dashboard's interactive route — nothing demoted. |
+| CD-27 | Canonical person id = COALESCE(npi, epdb_dw_prvdr_id); a person's multiple epdb ids merge (MIN kept, multi_epdb_flag = 1); every module-65 grouping runs on the canonical id | One person = one row per county = one split summing to 1; prevents the CMS row fanning out per epdb id. |
+| CD-28 | Specialty bridge MIN-deduped at the fill output: one deterministic cms_specialty per aetna_cd (share-split parked) | The raw one-to-many join fanned provider, facility AND remainder rows and double-counted growth (the V6 gap == growth signature); a single deterministic mapping preserves conservation. |
 
 ## 10. Limitations (report verbatim)
 
@@ -155,7 +158,11 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 | XGBoost intake model (odds from features) | If blending too coarse for Danielle's review |
 | Finer segment axes | Data-support check after v1 |
 | Multi-year horizon | Requires share-drift modeling |
-| CRED_K final solve — module 63's rerun detection did not trigger with 66/67 present; v1 ships the seed k = 20 (impact limited to blend weight on already-thin cells, ~99% borrowed either way, tags honest) | Cleanup pass reviews 63's detection condition |
+| CRED_K final solve wiring — module 63's rerun detection did not trigger with 66/67 present; v1 ships the seed k = 20 (impact limited to blend weight on already-thin cells, ~99% borrowed either way, tags honest) | Cleanup pass reviews 63's detection condition |
+| Maxed-metric 1% remaining-budget literal (module 71) → cap_params | Cleanup pass |
+| Bridge share-split — split a fanning aetna_cd's volume across its cms specialties instead of MIN-dedup (CD-28) | If secondary-mapping/Unattributed volume becomes material |
+| CMS FTE-day estimate generosity — cohort-median rate may overstate estimated days for low-volume CMS-only providers | Full-data run review |
+| Unattributed labeling — one consistent name for NULL segment/specialty volume across dashboard and exports | Cleanup pass |
 
 ## 12. Build checklist
 
@@ -186,3 +193,19 @@ Cells never sum past the total constraint: if Σ cell allocations would exceed s
 **Module 72 `72_validate.py`** — [ ] V1–V10 into `cap_validation`; [ ] limitations §10 verbatim into report notes
 
 **Every phase:** [ ] Claude Code prompt starts "You cannot run anything"; [ ] exactly one output; [ ] no report-back needing BQ execution; [ ] Deepan runs from office laptop, results pasted before next phase.
+
+## 13. Export scenarios (modules 74a/73/74)
+
+The EXPORT lane for frozen deliverables. Module 74a measures enrollment growth per state from the membership extract (distinct members, age 60+: g = members_2025 / members_2024 − 1), persists it to `cap_growth_measured`, expands `dem_segment_split`'s baseline into three frozen scenarios — `G_MINUS2` / `G_BASE` / `G_PLUS2` = g − 2pts / g / g + 2pts, floor 0, `growth_src_cd = 'MEASURED'` — and reruns module 69's fill per scenario into `cap_scenario_results`, plus the driver decomposition (`cap_county_drivers`) and county action lists (`cap_action_lists`). Modules 73 (Excel workbook) and 74 (single-file HTML) render those tables; neither recomputes the fill. The forecast/slider path is unchanged and remains the dashboard's interactive route (CD-26): sliders/forecast growth stay authoritative for what-if work; measured growth exists so frozen reports carry a defensible, data-measured rate. Nothing is demoted.
+
+## 14. Run state & calibration results
+
+Sample-mode end-to-end run (modules 59–72) complete 2026-07-30. Gates passed: impossible-day rate 0.28% pre-cap (<1% gate), V6 conservation green. Calibrated values are now FACTS of record (`cap_params` remains the machine source):
+
+- DAILY_CAP_HRS = 6.5
+- DEFLATION = 0.90 (E/M) / 0.85 (other) / 0.75 (procedures) — the anchors, rerun-verified
+- BENCH_PCTL = 90 (rank-stable across 85/95)
+- MIN_COHORT_N = 50
+- CRED_K = seed 20 (final solve parked — see Parked items)
+
+Full-data run pending.

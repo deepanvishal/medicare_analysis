@@ -67,31 +67,39 @@ Section total: **4 notebooks, 9–14 days**
 
 Section total: **3 notebooks, 7–10 days**
 
-## Section G — Capacity Risk (`08_capacity_risk/`, modules 60–72)
+## Section G — Capacity Risk (`08_capacity_risk/`, modules 58–74)
 
 Spec: capacity_methodology_v2.md + capacity_data_model_v2.md (00_docs).
-Old capacity (48/51/53) stays live until module 72 V9 passes.
+Old capacity (48/51/53) stays live: the weave capacity-feed switch
+(51/53 -> the new capacity pipeline) is still PENDING module 72 V9 plus
+the full-data run — do not switch without an explicit prompt.
 
-| # | Script | Does | Output table | Effort |
-|---|---|---|---|---|
-| 60 | 60_load_time_file.py | Load MPFS time file + seed segments | ref_mpfs_time, ref_segment | 0.5 |
-| 61 | 61_observed.py | Observed throughput, Type 1 only, both keys | cap_observed_detail | 1 |
-| 62 | 62_hours.py | Services -> hours, deflation, fallback ladder | cap_hours_daily, cap_hours_annual | 1 |
-| 63 | 63_calibrate.py | Solve all tuning params | cap_params | 1 |
-| 64 | 64_ceiling.py | Daily cap, impossible flags, fractional days | cap_daily_capped | 0.5 |
-| 65 | 65_provider_year.py | Provider-year rollup, FTE-days, ceilings | cap_provider_year | 1 |
-| 66 | 66_cohort_bench.py | Peer benchmarks + cohort intake rates | cap_cohort_bench | 1 |
-| 67 | 67_provider_segment.py | The matrix: blending, caps, tags | cap_provider_segment | 1.5 |
-| 68 | 68_dem_segment_split.py | Demand split anchored to 50's forecast | dem_segment_split | 1 |
-| 69 | 69_fill.py | Two-pass proportional fill | cap_fill_result | 1 |
-| 70 | 70_willing.py | Aetna share applied once | cap_willing | 0.5 |
-| 71 | 71_county_risk.py | County x specialty x segment risk + rank | cap_county_risk | 0.5 |
-| 72 | 72_validate.py | V1–V10 | cap_validation | 1 |
+| # | Script | Does | Output table | Status | Effort |
+|---|---|---|---|---|---|
+| 58 | 58_check_source_columns.sql | Probe source columns for the extract rebuild | (console query) | OBSOLETE — superseded by the direct extract rebuild (M58b) | - |
+| 59 | 59_load_cms_provider_2023.py | Load CMS by-provider 2023 summary file | cms_medicare_physician_ffs_2023 | BUILT + RUN (sample streak) | 0.5 |
+| 60 | 60_load_time_file.py | Load MPFS time file + seed segments | ref_mpfs_time, ref_segment | BUILT + RUN (sample) | 0.5 |
+| 61 | 61_observed.py | Observed throughput, Type 1 only, both keys | cap_observed_detail | BUILT + RUN (sample) | 1 |
+| 62 | 62_hours.py | Services -> hours, deflation, fallback ladder | cap_hours_daily, cap_hours_annual | BUILT + RUN (sample) | 1 |
+| 63 | 63_calibrate.py | Solve all tuning params | cap_params | BUILT + RUN (sample) | 1 |
+| 64 | 64_ceiling.py | Daily cap, impossible flags, fractional days | cap_daily_capped | BUILT + RUN (sample; impossible 0.28%) | 0.5 |
+| 65 | 65_provider_year.py | Provider-year rollup, FTE-days, ceilings | cap_provider_year | BUILT + RUN (sample) | 1 |
+| 66 | 66_cohort_bench.py | Peer benchmarks + cohort intake rates | cap_cohort_bench | BUILT + RUN (sample) | 1 |
+| 67 | 67_provider_segment.py | The matrix: blending, caps, tags | cap_provider_segment | BUILT + RUN (sample) | 1.5 |
+| 68 | 68_dem_segment_split.py | Demand split anchored to 50's forecast | dem_segment_split | BUILT + RUN (sample) | 1 |
+| 69 | 69_fill.py | Two-pass proportional fill | cap_fill_result | BUILT + RUN (sample; V6 green) | 1 |
+| 70 | 70_willing.py | Aetna share applied once | cap_willing | BUILT + RUN (sample) | 0.5 |
+| 71 | 71_county_risk.py | County x specialty x segment risk + rank | cap_county_risk | BUILT + RUN (sample) | 0.5 |
+| 72 | 72_validate.py | V1–V10 | cap_validation | BUILT + RUN (sample) | 1 |
+| 74a | 74a_measured_growth.py | Measured enrollment growth; three frozen scenarios through 69's fill; drivers + action lists (export lane, CD-26) | cap_growth_measured, cap_scenario_input, cap_scenario_results, cap_county_drivers, cap_action_lists | BUILT — run pending | 1 |
+| 73 | 73_report_xlsx.py | Frozen Excel deliverable (9 tabs) from the 74a tables | outputs/capacity_report.xlsx | BUILT — run after 74a | 1 |
+| 74 | 74_report_html.py | Self-contained HTML deliverable (plotly inlined, no server) | outputs/capacity_report.html | BUILT — run after 74a | 1 |
 
-Section total: 13 scripts, ~11.5 days
+Section total: 17 scripts, ~14 days
 
 Order: 60 -> 61 -> 62 -> 63 -> 64 -> 65 -> 66 -> 67 (68 parallel after 63)
--> 69 -> 70 -> 71 -> 72. Gate stops: 60 (match rate), 64 (impossible <1%).
+-> 69 -> 70 -> 71 -> 72 -> 74a -> 73 -> 74. Gate stops: 60 (match rate),
+64 (impossible <1%), 74a (enrollment + per-scenario conservation).
 
 ---
 

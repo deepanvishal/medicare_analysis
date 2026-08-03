@@ -43,6 +43,20 @@ bigquery-public-data.census_bureau_acs.zip_codes_2018_5yr
 anbc-hcb-dev.provider_ds_netconf_data_hcb_dev.cms_medicare_physician_ffs_2023  ← CMS FFS by NPI (annual, no dates; has rndrng_prvdr_mdcr_prtcptg_ind)
 ```
 
+**Capacity-risk tables (expanded_scope/dc_v2/08_capacity_risk, modules 59–74a; all created/read via expanded_scope/config.py cfg.table() → prefix `A870800_medicare_supply_demand_ms_`):**
+```
+ref_mpfs_time, ref_segment                                   ← module 60 (MPFS minutes + 8 segments)
+cap_params                                                   ← module 63 (all tuning values)
+cap_observed_detail, cap_hours_daily, cap_hours_annual       ← modules 61-62
+cap_daily_capped, cap_provider_year                          ← modules 64-65
+cap_cohort_bench, cap_provider_segment                       ← modules 66-67
+dem_segment_split, cap_fill_result                           ← modules 68-69
+cap_willing, cap_county_risk, cap_validation                 ← modules 70-72
+cap_growth_measured, cap_scenario_input, cap_scenario_results,
+cap_county_drivers, cap_action_lists                         ← module 74a (export lane)
+```
+Export reports: `73_report_xlsx.py` / `74_report_html.py` render the frozen measured-enrollment-growth scenarios (G_BASE ± 2pts) from the 74a tables into `08_capacity_risk/outputs/`; the dashboard keeps the interactive forecast/slider path.
+
 ---
 
 ## File Structure

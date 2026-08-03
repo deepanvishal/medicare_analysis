@@ -7,7 +7,9 @@ WHAT  : EXPORT lane for the Excel/HTML exports (73/74). Modules 59-72 and
         per state 2024 vs 2025 from A870800_medicare_analysis_membership
         (the EMIS_MEMBERSHIP extract, member x month grain, DD-08 - the
         membership source notebooks 46/48/53/55 read). NOT claims
-        utilizers. g(state) = members_2025 / members_2024 - 1.
+        utilizers. g(state) = members_2025 / members_2024 - 1, persisted
+        to cap_growth_measured (per state + ALL_FOOTPRINT rollup row) so
+        the export reports (73/74) read the measured rates from BQ.
         STEP 2: cap_scenario_input - dem_segment_split baseline x three
         frozen scenarios: growth_demand = segment_demand x g_applied,
         g_applied = max(g + delta, 0), delta in (-0.02, 0, +0.02),
@@ -24,7 +26,8 @@ WHAT  : EXPORT lane for the Excel/HTML exports (73/74). Modules 59-72 and
         county-level PAPER_NETWORK count as a context column.
         STEP 5: cap_action_lists - per county: top 15 providers by
         remaining room, all contracted zero-claim, all at-capacity.
-GRAIN : cap_scenario_input   scenario_cd x mbr_county_cd + mbr_state_cd x
+GRAIN : cap_growth_measured  state_cd (4 states + 'ALL_FOOTPRINT')
+        cap_scenario_input   scenario_cd x mbr_county_cd + mbr_state_cd x
                              specialty_ctg_cd x segment_cd
         cap_scenario_results row_type_cd 'CELL' = scenario x demand cell
                              (growth/facility/placed/unplaced); 'ALLOC' =
@@ -37,8 +40,9 @@ INPUTS: A870800_medicare_analysis_membership, dem_segment_split,
         cap_hours_annual, cap_willing, ms_ref_county,
         ref_specialty_crosswalk (cfg.base), HCC map,
         A870800_medicare_analysis_2025_claims (ONE scan - facility share)
-OUTPUT: cap_scenario_input, cap_scenario_results, cap_county_drivers,
-        cap_action_lists (BigQuery tables) + gates + sanity prints.
+OUTPUT: cap_growth_measured, cap_scenario_input, cap_scenario_results,
+        cap_county_drivers, cap_action_lists (BigQuery tables) + gates +
+        sanity prints.
 Run   : python expanded_scope/dc_v2/08_capacity_risk/74a_measured_growth.py
 """
 
@@ -124,6 +128,7 @@ ANNUAL = cfg.table("cap_hours_annual")
 WILL   = cfg.table("cap_willing")
 CTY    = cfg.table("ref_county")
 XWALK  = cfg.base("ref_specialty_crosswalk")
+GROWTH = cfg.table("cap_growth_measured")
 IN_T   = cfg.table("cap_scenario_input")
 RES    = cfg.table("cap_scenario_results")
 DRV    = cfg.table("cap_county_drivers")
@@ -140,10 +145,14 @@ INTERNAL_YR = 2025   # capacity base year, matching modules 65/69
 STATES_SQL = cfg.state_abbr_sql()
 
 # ---------------------------------------------------------------- STEP 1
-# Enrollment counts and measured growth, printed + gated in main().
-# ROLLUP row (state NULL) = footprint overall.
+# Enrollment counts and measured growth -> cap_growth_measured (persisted
+# for the 73/74 export reports), printed + gated in main().
+# ROLLUP row = 'ALL_FOOTPRINT' (overall; also the A2 fallback rate).
 
-ENROLLMENT = f"""
+DDL_GROWTH = f"""
+CREATE OR REPLACE TABLE `{GROWTH}`
+OPTIONS (labels=[("owner", "deepan_thulasi_aetna_com")])
+AS
 WITH mbr AS (
   SELECT UPPER(LEFT(m.mbr_submarket, 2)) AS state_cd,
          m.member_id,
@@ -156,12 +165,18 @@ SELECT
   IFNULL(state_cd, 'ALL_FOOTPRINT') AS state_cd,
   COUNT(DISTINCT IF(eff_yr = 2024, member_id, NULL)) AS members_2024,
   COUNT(DISTINCT IF(eff_yr = 2025, member_id, NULL)) AS members_2025,
-  ROUND(SAFE_DIVIDE(COUNT(DISTINCT IF(eff_yr = 2025, member_id, NULL)),
-                    COUNT(DISTINCT IF(eff_yr = 2024, member_id, NULL))) - 1, 4)
-    AS g_state
+  SAFE_DIVIDE(COUNT(DISTINCT IF(eff_yr = 2025, member_id, NULL)),
+              COUNT(DISTINCT IF(eff_yr = 2024, member_id, NULL))) - 1
+    AS g_state,
+  CURRENT_TIMESTAMP() AS load_ts
 FROM mbr
 WHERE state_cd IN {STATES_SQL}
 GROUP BY ROLLUP(state_cd)
+"""
+
+ENROLLMENT = f"""
+SELECT state_cd, members_2024, members_2025, ROUND(g_state, 4) AS g_state
+FROM `{GROWTH}`
 ORDER BY state_cd
 """
 
@@ -179,25 +194,13 @@ DDL_INPUT = f"""
 CREATE OR REPLACE TABLE `{IN_T}`
 OPTIONS (labels=[("owner", "deepan_thulasi_aetna_com")])
 AS
-WITH mbr AS (
-  SELECT UPPER(LEFT(m.mbr_submarket, 2)) AS state_cd,
-         m.member_id,
-         CAST(m.eff_yr AS INT64)         AS eff_yr
-  FROM `{MBRSHP}` m
-  WHERE m.age_nbr >= 60
-    AND CAST(m.eff_yr AS INT64) IN (2024, 2025)
-    AND UPPER(LEFT(m.mbr_submarket, 2)) IN {STATES_SQL}
-),
-g_state AS (
-  SELECT state_cd,
-         SAFE_DIVIDE(COUNT(DISTINCT IF(eff_yr = 2025, member_id, NULL)),
-                     COUNT(DISTINCT IF(eff_yr = 2024, member_id, NULL))) - 1 AS g
-  FROM mbr GROUP BY 1
+WITH g_state AS (
+  SELECT state_cd, g_state AS g
+  FROM `{GROWTH}` WHERE state_cd != 'ALL_FOOTPRINT'
 ),
 g_overall AS (
-  SELECT SAFE_DIVIDE(COUNT(DISTINCT IF(eff_yr = 2025, member_id, NULL)),
-                     COUNT(DISTINCT IF(eff_yr = 2024, member_id, NULL))) - 1 AS g
-  FROM mbr
+  SELECT g_state AS g
+  FROM `{GROWTH}` WHERE state_cd = 'ALL_FOOTPRINT'
 ),
 scenarios AS (
   SELECT 'G_MINUS2' AS scenario_cd, -0.02 AS g_delta UNION ALL
@@ -828,7 +831,8 @@ def main():
     print(f"RUN_MODE = {RUN_MODE}")
     client = cfg.client()
 
-    # STEP 1 - enrollment growth by state (print + gate)
+    # STEP 1 - enrollment growth by state (persist + print + gate)
+    _run(client, "create cap_growth_measured", DDL_GROWTH)
     print("--- enrollment (distinct members 60+, 2024 vs 2025) ---")
     g_by_state = {}
     for row in _run(client, "enrollment by state", ENROLLMENT):
@@ -927,7 +931,8 @@ if __name__ == "__main__":
 #    the gate passes.
 # Reviewer 3 EFFICIENCY:
 #  - Exactly ONE claims scan (fac_share, sampled per R2). Membership is
-#    scanned twice (print + input DDL) - a small extract, not claims.
+#    scanned twice (cap_growth_measured DDL + the outside-footprint print) -
+#    a small extract, not claims; the input DDL reads the persisted rates.
 #  - The scenarios CROSS JOIN is a deliberate 3-row fan on the demand
 #    table; g_overall and ret_rate_overall are 1-row CROSS JOINs; no other
 #    CROSS JOINs, no row-explosion joins (bridge deduped before use).
