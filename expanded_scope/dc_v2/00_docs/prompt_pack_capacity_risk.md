@@ -495,3 +495,49 @@ TAB SPEC:
 
 One output: the edited whatif_dashboard_v2.py. Append this prompt to the
 pack under "## Prompt DASH-2 — county risk tab".
+
+## Prompt M74a
+
+You cannot run anything. Deepan runs everything. Standing rules R1-R3
+apply; rule 12 (county never without state); read
+capacity_methodology_v2.md and capacity_data_model_v2.md first.
+
+Create expanded_scope/dc_v2/08_capacity_risk/74a_measured_growth.py
+
+PURPOSE: compute state growth from ENROLLMENT data, run the fill at three
+frozen scenarios for the Excel/HTML exports (73/74). This is an EXPORT
+lane — modules 59-72 and the dashboard's forecast/slider path stay
+untouched.
+
+STEP 1 — growth from enrollment: find the membership/eligibility source
+the dc_v2 foundation notebooks actually use (READ the 40s notebooks and
+the extract build; EMIS_MEMBERSHIP appears in test_sql.sql). Compute
+distinct enrolled members per state, 2024 vs 2025, from the true
+membership grain — NOT from claims utilizers. g(state) =
+members_2025/members_2024 - 1. If no true enrollment source exists in
+the repo, STOP and report what member-count sources DO exist and their
+grain — do not silently fall back to claims.
+
+STEP 2 — scenario inputs: from dem_segment_split's baseline, growth_demand
+= segment_demand x g(state); scenario_cd in ('G_MINUS2','G_BASE',
+'G_PLUS2') using g-0.02, g, g+0.02 (floor 0), growth_src_cd='MEASURED'.
+Write cap_scenario_input. Do NOT modify dem_segment_split.
+
+STEP 3 — run the fill per scenario: mirror 69_fill.py's logic EXACTLY
+(read it; replicate the CTE chain, both lanes, facility peel, dedup
+bridge). Write cap_scenario_results (state x county x cms_specialty x
+segment x scenario_cd: growth/facility/placed/unplaced) plus provider
+alloc rows. Conservation check per scenario — STOP on failure.
+
+STEP 4 — driver decomposition (G_BASE), per county x specialty: unplaced
+split by cause in priority order NO_PROVIDERS / DOORS_CLOSED /
+AT_CAPACITY; county-level PAPER_NETWORK count as a context column. Write
+cap_county_drivers.
+
+STEP 5 — action lists (G_BASE) per county: top 15 providers by remaining
+room; all contracted zero-claim; all at-capacity. Write cap_action_lists.
+
+Sanity prints: enrollment counts + growth rate by state; per-scenario
+growth/placed/unplaced totals; driver shares; action list counts.
+RUN_MODE per R2. One output: the script. Append to pack under
+"## Prompt M74a".
